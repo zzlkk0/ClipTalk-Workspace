@@ -1,0 +1,16 @@
+.git
+node_modules
+data
+uploads
+database
+config.json
+history.json
+certs
+.env
+validation
+ops
+publish
+test
+*.log
+baseline-sha256.json
+release-sha256.json

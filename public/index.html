@@ -1,0 +1,800 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>共享工作区 — Shared Workspace</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --bg: #0f0f14; --panel: #1a1a24; --border: #2a2a3a;
+    --text: #d0d0dc; --dim: #707088; --accent: #6c8cff;
+    --accent2: #50d890; --danger: #ff6b7a; --hover: #252535; --input: #14141e;
+  }
+  body {
+    font-family: -apple-system, "Segoe UI", "Noto Sans SC", sans-serif;
+    background: var(--bg); color: var(--text);
+    height: 100vh; overflow: hidden; display: flex; flex-direction: column;
+  }
+  .topbar {
+    display: flex; align-items: center; gap: 8px;
+    padding: 8px 14px; background: var(--panel);
+    border-bottom: 1px solid var(--border); flex-shrink: 0;
+  }
+  .topbar .logo { font-weight: 700; font-size: 15px; color: var(--accent); }
+  .topbar .status { font-size: 12px; color: var(--dim); flex: 1; }
+  .topbar .status-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--accent2); margin-right: 4px; }
+  .topbar .status-dot.off { background: var(--danger); }
+  .tag {
+    font-size: 11px; padding: 3px 10px; border-radius: 10px;
+    border: 1px solid var(--border); color: var(--dim); cursor: pointer;
+    transition: all 0.15s; user-select: none;
+  }
+  .tag:hover { border-color: var(--accent); color: var(--accent); }
+  .tag.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .tag.panel-toggle { font-size: 14px; padding: 3px 8px; }
+  .tag.panel-toggle.hidden { opacity: 0.4; text-decoration: line-through; }
+
+  /* ── 三栏布局 ── */
+  .main { display: flex; flex: 1; overflow: hidden; gap: 0; }
+
+  .panel {
+    background: var(--panel); display: flex; flex-direction: column;
+    flex: 1; min-width: 200px; position: relative;
+    border-right: 1px solid var(--border);
+    transition: flex 0.25s ease, min-width 0.25s ease, opacity 0.2s;
+  }
+  .panel:last-child { border-right: none; }
+  .panel.collapsed { flex: 0 0 0px !important; min-width: 0; overflow: hidden; opacity: 0; border-right: none; }
+
+  .panel-header {
+    padding: 10px 14px; font-size: 12px; font-weight: 600;
+    color: var(--dim); border-bottom: 1px solid var(--border); flex-shrink: 0;
+    text-transform: uppercase; letter-spacing: 0.5px;
+    display: flex; align-items: center; gap: 8px; user-select: none;
+  }
+  .panel-header .panel-title { flex: 1; }
+  .panel-header .collapse-btn {
+    font-size: 14px; cursor: pointer; opacity: 0.6; padding: 0 4px;
+    transition: opacity 0.15s;
+  }
+  .panel-header .collapse-btn:hover { opacity: 1; }
+
+  /* ── 剪贴板 ── */
+  #clipboard-area {
+    flex: 1; padding: 10px; background: var(--input); border: none; outline: none;
+    color: var(--text); font-family: "JetBrains Mono", "Fira Code", monospace;
+    font-size: 13px; line-height: 1.6; resize: none;
+  }
+  #clipboard-area::placeholder { color: var(--dim); }
+  .clip-actions { display: flex; gap: 6px; padding: 8px 10px; border-top: 1px solid var(--border); flex-shrink: 0; }
+  .clip-actions button {
+    flex: 1; padding: 6px 12px; border: 1px solid var(--border);
+    background: var(--hover); color: var(--text); border-radius: 6px; cursor: pointer; font-size: 12px;
+  }
+  .clip-actions button:hover { background: var(--accent); color: #fff; border-color: var(--accent); }
+
+  /* ── 对话 ── */
+  #chat-messages { flex: 1; overflow-y: auto; padding: 10px; display: flex; flex-direction: column; gap: 6px; }
+  .chat-msg { font-size: 13px; line-height: 1.5; animation: fadeIn 0.2s; word-break: break-word; }
+  .chat-msg.system { color: var(--dim); font-size: 12px; text-align: center; padding: 4px 0; }
+  .chat-msg .time { font-size: 10px; color: var(--dim); margin-right: 6px; }
+  .chat-msg .sender { color: var(--accent); font-weight: 600; margin-right: 6px; }
+  .chat-msg a { color: var(--accent2); text-decoration: underline; cursor: pointer; }
+  .chat-msg .msg-text { white-space: pre-wrap; }
+  .chat-input-row { display: flex; gap: 6px; padding: 8px 10px; border-top: 1px solid var(--border); flex-shrink: 0; align-items: flex-end; }
+  .chat-input-row textarea {
+    flex: 1; padding: 8px 12px; border: 1px solid var(--border);
+    background: var(--input); color: var(--text); border-radius: 6px; font-size: 13px; outline: none;
+    resize: none; min-height: 36px; max-height: 120px; line-height: 1.5; font-family: inherit;
+  }
+  .chat-input-row textarea:focus { border-color: var(--accent); }
+  .chat-input-row button {
+    padding: 8px 16px; border: none; background: var(--accent); color: #fff;
+    border-radius: 6px; cursor: pointer; font-weight: 600; font-size: 13px; flex-shrink: 0;
+  }
+  .chat-input-row button:hover { opacity: 0.85; }
+  .chat-hint { font-size: 10px; color: var(--dim); padding: 0 10px 6px; text-align: right; }
+
+  /* ── 垂直分隔条 ── */
+  .v-resizer {
+    height: 4px; cursor: row-resize; background: var(--border);
+    flex-shrink: 0; transition: background 0.15s;
+  }
+  .v-resizer:hover, .v-resizer.active { background: var(--accent); }
+
+  /* ── 文件 ── */
+  .drop-zone {
+    margin: 10px; padding: 26px 20px; border: 2px dashed var(--border);
+    border-radius: 10px; text-align: center; color: var(--dim); font-size: 13px;
+    cursor: pointer; transition: all 0.2s; flex-shrink: 0;
+  }
+  .drop-zone:hover, .drop-zone.drag-over { border-color: var(--accent); color: var(--accent); background: rgba(108,140,255,0.06); }
+  .drop-zone .drop-icon { font-size: 30px; display: block; margin-bottom: 6px; }
+  #file-list { flex: 1; overflow-y: auto; padding: 0 10px 10px; }
+  .file-item {
+    display: flex; align-items: center; gap: 10px; padding: 8px 10px;
+    border-radius: 6px; font-size: 13px; transition: background 0.15s;
+  }
+  .file-item:hover { background: var(--hover); }
+  .file-item .fname { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .file-item .fsize { color: var(--dim); font-size: 11px; flex-shrink: 0; }
+  .file-item a {
+    color: var(--accent); text-decoration: none; font-size: 12px;
+    padding: 4px 10px; border: 1px solid var(--accent); border-radius: 4px;
+  }
+  .file-item a:hover { background: var(--accent); color: #fff; }
+  .file-item .del-btn { color: var(--danger); cursor: pointer; font-size: 14px; padding: 2px 6px; border-radius: 4px; }
+  .file-item .del-btn:hover { background: rgba(255,107,122,0.15); }
+
+  @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+
+  /* ── 分隔条拖拽调宽 ── */
+  .resizer {
+    width: 4px; cursor: col-resize; background: var(--border);
+    flex-shrink: 0; transition: background 0.15s; z-index: 5;
+  }
+  .resizer:hover, .resizer.active { background: var(--accent); }
+
+  @media (max-width: 900px) {
+    .main { flex-direction: column; }
+    .panel { min-height: 100px; max-height: 50vh; border-right: none; border-bottom: 1px solid var(--border); }
+    .panel:last-child { border-bottom: none; }
+    .resizer { display: none; }
+  }
+  button { font-family: inherit; }
+  button:disabled { opacity: .5; cursor: wait; }
+  [hidden] { display: none !important; }
+  .account-label { color: var(--text); font-size: 12px; }
+  #storage-usage { margin-left: auto; white-space: nowrap; }
+  #storage-progress { width: 90px; height: 8px; accent-color: var(--accent); }
+  .workspace-note { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; padding: 6px 14px; color: var(--dim); border-bottom: 1px solid var(--border); font-size: 12px; }
+  .small-btn { border: 1px solid var(--border); border-radius: 5px; background: var(--hover); color: var(--text); padding: 4px 8px; cursor: pointer; font-size: 12px; }
+  .small-btn:hover { border-color: var(--accent); }
+  .small-btn.danger { color: var(--danger); }
+  .notice { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%); background: var(--hover); border: 1px solid var(--accent); border-radius: 8px; padding: 12px 20px; z-index: 50; max-width: 90vw; }
+  dialog { margin: auto; width: min(480px, 94vw); max-height: 88vh; border: 1px solid var(--border); border-radius: 12px; padding: 20px; background: var(--panel); color: var(--text); overflow-y: auto; }
+  dialog::backdrop { background: rgba(0,0,0,.65); }
+  .wide-dialog { width: min(820px, 94vw); }
+  .dialog-header { display: flex; align-items: center; gap: 12px; justify-content: space-between; margin-bottom: 12px; }
+  h2 { font-size: 18px; overflow-wrap: anywhere; }
+  h3 { margin: 16px 0 8px; font-size: 14px; color: var(--accent); }
+  dialog label { display: flex; flex-direction: column; gap: 6px; font-size: 13px; margin: 12px 0; flex: 1; }
+  dialog input, dialog select, dialog textarea { width: 100%; background: var(--input); border: 1px solid var(--border); color: var(--text); border-radius: 5px; padding: 8px; font: inherit; color-scheme: dark; }
+  dialog textarea { min-height: 90px; resize: vertical; }
+  .date-fields, .rename-row { display: flex; gap: 10px; }
+  .rename-row { margin-top: 12px; align-items: center; flex-wrap: wrap; }
+  .rename-row input { flex: 1; min-width: 160px; }
+  .muted { color: var(--dim); font-size: 12px; line-height: 1.6; }
+  .error { color: var(--danger); font-size: 13px; min-height: 20px; }
+  .dialog-actions { display: flex; justify-content: flex-end; margin: 12px 0; }
+  .primary { padding: 8px 16px; background: var(--accent); border: 0; border-radius: 6px; color: #fff; cursor: pointer; }
+  .archive-card { display: flex; align-items: center; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--border); }
+  .archive-card .archive-text { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+  .archive-card strong { display: block; margin-bottom: 5px; }
+  .file-meta { min-width: 0; flex: 1; }
+  .file-meta .fname { display: block; }
+  #archive-messages .chat-msg { margin-bottom: 8px; }
+  #archive-files .file-item { flex-wrap: wrap; }
+  @media (max-width: 900px) {
+    .topbar { flex-wrap: wrap; }
+    .main { overflow-y: auto; }
+    .panel { flex: 0 0 320px; min-height: 200px; max-height: none; }
+    .panel.collapsed { min-height: 0; }
+    .panel-header { flex-wrap: wrap; }
+    .date-fields { flex-wrap: wrap; }
+  }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <span class="logo">⚡ <span data-t="workspace.title">共享工作区</span></span>
+  <span class="status"><span class="status-dot" id="status-dot"></span><span id="status-text">-</span></span>
+  <span class="tag panel-toggle" id="toggle-clipboard" onclick="togglePanel('clipboard')" title="显示/隐藏 剪贴板">📋</span>
+  <span class="tag panel-toggle" id="toggle-chat" onclick="togglePanel('chat')" title="显示/隐藏 对话">💬</span>
+  <span class="tag panel-toggle" id="toggle-files" onclick="togglePanel('files')" title="显示/隐藏 文件">📁</span>
+  <span class="tag" id="admin-btn" onclick="location.href='/admin3.html'" style="display:none" data-t="workspace.admin_panel">管理</span>
+  <span class="account-label" id="account-label"></span>
+  <button class="tag" onclick="openArchiveList()" data-t="workspace.archives">归档</button>
+  <span class="tag" id="lang-btn" onclick="toggleLang()">🌐</span>
+  <span class="tag" onclick="doLogout()" data-t="workspace.logout">退出</span>
+</div>
+
+<div class="workspace-note"><span data-t="workspace.account_note">工作区按账号独立，同一账号的所有设备实时同步。</span><span id="storage-usage" role="status"></span><progress id="storage-progress" max="100" value="0" aria-label="空间使用率"></progress></div>
+<div class="main" id="main">
+  <!-- 剪贴板 -->
+  <div class="panel" id="panel-clipboard" data-panel="clipboard">
+    <div class="panel-header">
+      <span class="panel-title">📋 <span data-t="workspace.clipboard">共享剪贴板</span></span>
+      <span class="collapse-btn" onclick="togglePanel('clipboard')">✕</span>
+    </div>
+    <textarea id="clipboard-area" data-t-placeholder="workspace.clipboard_placeholder" placeholder="在这里粘贴或输入文本…"></textarea>
+    <div class="clip-actions">
+      <button onclick="copyToSystemClipboard()" data-t="workspace.copy_system">复制到系统剪贴板</button>
+      <button onclick="clearClipboard()" data-t="workspace.clear">清空</button>
+    </div>
+  </div>
+  <div class="resizer" data-target="clipboard"></div>
+
+  <!-- 对话 -->
+  <div class="panel" id="panel-chat" data-panel="chat">
+    <div class="panel-header">
+      <span class="panel-title">💬 <span data-t="workspace.chat">对话</span></span>
+      <button class="small-btn" onclick="openArchiveForm('chat')" data-t="workspace.archive">归档</button>
+      <button class="small-btn danger" onclick="clearWorkspace('chat')" data-t="workspace.clear_all">清空</button>
+      <span class="collapse-btn" onclick="togglePanel('chat')">✕</span>
+    </div>
+    <div id="chat-messages"></div>
+    <div class="v-resizer" id="chat-v-resizer"></div>
+    <div class="chat-input-row" id="chat-input-row">
+      <textarea id="chat-input" data-t-placeholder="workspace.chat_placeholder" placeholder="输入消息…" rows="1"></textarea>
+      <button onclick="sendMessage()" data-t="workspace.send">发送</button>
+    </div>
+    <div class="chat-hint">Enter 发送 · Shift+Enter 换行</div>
+  </div>
+  <div class="resizer" data-target="chat"></div>
+
+  <!-- 文件 -->
+  <div class="panel" id="panel-files" data-panel="files">
+    <div class="panel-header">
+      <span class="panel-title">📁 <span data-t="workspace.files">文件传输</span></span>
+      <button class="small-btn" onclick="openArchiveForm('files')" data-t="workspace.archive">归档</button>
+      <button class="small-btn danger" onclick="clearWorkspace('files')" data-t="workspace.clear_all">清空</button>
+      <span class="collapse-btn" onclick="togglePanel('files')">✕</span>
+    </div>
+    <div class="drop-zone" id="drop-zone" onclick="document.getElementById('file-input').click()">
+      <span class="drop-icon">📤</span>
+      <span data-t="workspace.drop_text">拖拽文件到这里 或 点击选择</span><br>
+      <small data-t="workspace.drop_max">最大 500MB / 文件</small>
+    </div>
+    <input type="file" id="file-input" multiple style="display:none" onchange="uploadFiles(this.files)">
+    <div id="file-list"></div>
+  </div>
+</div>
+
+<div id="notice" class="notice" role="status" aria-live="polite" hidden></div>
+
+<dialog id="archive-form-dialog">
+  <form id="archive-form">
+    <div class="dialog-header"><h2 data-t="workspace.archive_by_date">按日期归档</h2><button type="button" class="small-btn" onclick="document.getElementById('archive-form-dialog').close()" data-t="workspace.close">关闭</button></div>
+    <p class="muted" data-t="workspace.archive_hint">归档后从当前区移除，仍可在归档中心查看、下载和恢复。日期按澳门时间，包含起止两天。</p>
+    <label><span data-t="workspace.archive_name">归档名称</span><input id="archive-title" name="title" required maxlength="80" autocomplete="off"></label>
+    <div class="date-fields">
+      <label><span data-t="workspace.start_date">开始日期</span><input id="archive-start" type="date" required></label>
+      <label><span data-t="workspace.end_date">结束日期</span><input id="archive-end" type="date" required></label>
+    </div>
+    <label><span data-t="workspace.archive_scope">归档内容</span><select id="archive-scope"><option value="chat" data-t="workspace.chat">对话</option><option value="files" data-t="workspace.files">文件传输</option><option value="both" data-t="workspace.chat_and_files">对话和文件</option></select></label>
+    <p id="archive-form-error" class="error" role="alert"></p>
+    <div class="dialog-actions"><button id="archive-submit" type="submit" class="primary" data-t="workspace.create_archive">创建归档</button></div>
+  </form>
+</dialog>
+
+<dialog id="archives-dialog" class="wide-dialog">
+  <div class="dialog-header"><h2 data-t="workspace.archives">归档</h2><button class="small-btn" onclick="document.getElementById('archives-dialog').close()" data-t="workspace.close">关闭</button></div>
+  <div class="dialog-actions"><button class="small-btn" onclick="openArchiveForm('both')" data-t="workspace.archive_by_date">按日期归档</button></div>
+  <div id="archive-list"></div>
+</dialog>
+
+<dialog id="archive-detail-dialog" class="wide-dialog">
+  <div class="dialog-header"><h2 id="archive-detail-title"></h2><button class="small-btn" onclick="document.getElementById('archive-detail-dialog').close()" data-t="workspace.close">关闭</button></div>
+  <p id="archive-detail-info" class="muted"></p>
+  <form id="archive-rename-form" class="rename-row"><input id="archive-rename-title" required maxlength="80" aria-label="归档名称"><button class="small-btn" type="submit" data-t="workspace.rename">重命名</button><button class="small-btn" type="button" onclick="restoreArchive()" data-t="workspace.restore">恢复到当前区</button><button class="small-btn danger" type="button" onclick="deleteArchive()" data-t="workspace.delete_archive">删除归档</button></form>
+  <section id="archive-clipboard-section" hidden><h3 data-t="workspace.legacy_clipboard">旧版剪贴板</h3><textarea id="archive-clipboard" readonly></textarea></section>
+  <h3 data-t="workspace.chat">对话</h3><div id="archive-messages"></div>
+  <h3 data-t="workspace.files">文件传输</h3><div id="archive-files"></div>
+</dialog>
+
+<script src="/socket.io/socket.io.js"></script>
+<script>
+// ─── i18n ───────────────────────────────────────
+let lang = localStorage.getItem('lang') || 'zh-CN';
+let i18n = {};
+
+async function loadLang(l) {
+  try {
+    const resp = await fetch('/api/i18n/' + l);
+    i18n = await resp.json(); lang = l;
+    localStorage.setItem('lang', l);
+    fetch('/api/lang', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({lang:l})});
+    applyLang();
+  } catch(e) {}
+}
+
+function t(path) { return path.split('.').reduce((o,k)=>(o||{})[k], i18n) || path; }
+
+function applyLang() {
+  document.querySelectorAll('[data-t]').forEach(el => { el.textContent = t(el.dataset.t); });
+  document.querySelectorAll('[data-t-placeholder]').forEach(el => { el.placeholder = t(el.dataset.tPlaceholder); });
+  document.title = t('workspace.title');
+  var btn = document.getElementById('lang-btn');
+  if (btn) btn.textContent = (lang === 'en') ? '🌐 EN' : '🌐 中文';
+}
+
+function switchLang(l) { loadLang(l); }
+function toggleLang() {
+  var next = (lang === 'zh-CN') ? 'en' : 'zh-CN';
+  loadLang(next);
+}
+
+// ─── 认证检查 ───────────────────────────────────
+let myUserRole = 'user';
+
+async function checkAuth() {
+  try {
+    const resp = await fetch('/api/me');
+    if (!resp.ok) { window.location.href = '/login.html'; return; }
+    const user = await resp.json();
+    myUserRole = user.role;
+    document.getElementById('account-label').textContent = user.username;
+    lang = user.language || localStorage.getItem('lang') || 'zh-CN';
+    await loadLang(lang);
+    if (user.role === 'admin') {
+      document.getElementById('admin-btn').style.display = '';
+    }
+    initApp();
+    initPanels();
+  } catch(e) {
+    window.location.href = '/login.html';
+  }
+}
+
+// ─── 面板隐藏/显示 + 调宽 ────────────────
+function initPanels() {
+  restorePanelState();
+  initResizers();
+}
+
+function initResizers() {
+  document.querySelectorAll('.resizer').forEach(function(resizer) {
+    resizer.addEventListener('mousedown', function(e) {
+      e.preventDefault();
+      resizer.classList.add('active');
+      var prevPanel = resizer.previousElementSibling;
+      var nextPanel = resizer.nextElementSibling;
+      if (!prevPanel || !prevPanel.classList.contains('panel')) return;
+      var startX = e.clientX;
+      var startWidth = prevPanel.offsetWidth;
+      var mainWidth = document.getElementById('main').offsetWidth;
+
+      function onMouseMove(e2) {
+        var newWidth = startWidth + (e2.clientX - startX);
+        var minWidth = 200;
+        if (newWidth < minWidth) newWidth = minWidth;
+        var otherPanels = Array.from(document.querySelectorAll('.panel:not(.collapsed)')).filter(function(p) { return p !== prevPanel; });
+        var otherMin = otherPanels.length * 200;
+        if (newWidth > mainWidth - otherMin - 40) newWidth = mainWidth - otherMin - 40;
+        prevPanel.style.flex = '0 0 ' + newWidth + 'px';
+      }
+
+      function onMouseUp() {
+        resizer.classList.remove('active');
+        document.removeEventListener('mousemove', onMouseMove);
+        document.removeEventListener('mouseup', onMouseUp);
+      }
+
+      document.addEventListener('mousemove', onMouseMove);
+      document.addEventListener('mouseup', onMouseUp);
+    });
+  });
+
+  // ── 垂直分隔条（聊天区上下拖拽）──
+  initVerticalResizers();
+}
+
+function initVerticalResizers() {
+  document.querySelectorAll('.v-resizer').forEach(function(resizer) {
+    // 找到上下两个元素
+    var upper = resizer.previousElementSibling;
+    var lower = resizer.nextElementSibling;
+    if (!upper || !lower) return;
+
+    // 给 upper 设一个可 flex 的基础
+    upper.style.flex = '1 1 auto';
+    upper.style.minHeight = '60px';
+    upper.style.overflow = 'auto';
+    lower.style.flexShrink = '0';
+
+    resizer.addEventListener('mousedown', function(e) {
+      e.preventDefault();
+      resizer.classList.add('active');
+      var startY = e.clientY;
+      var startHeight = upper.offsetHeight;
+      var parentHeight = resizer.parentElement.offsetHeight;
+
+      function onMouseMove(e2) {
+        var newHeight = startHeight + (e2.clientY - startY);
+        if (newHeight < 60) newHeight = 60;
+        if (newHeight > parentHeight - 80) newHeight = parentHeight - 80;
+        upper.style.flex = '0 0 ' + newHeight + 'px';
+      }
+
+      function onMouseUp() {
+        resizer.classList.remove('active');
+        document.removeEventListener('mousemove', onMouseMove);
+        document.removeEventListener('mouseup', onMouseUp);
+      }
+
+      document.addEventListener('mousemove', onMouseMove);
+      document.addEventListener('mouseup', onMouseUp);
+    });
+  });
+}
+
+function togglePanel(name) {
+  var panel = document.getElementById('panel-' + name);
+  var toggle = document.getElementById('toggle-' + name);
+  if (!panel) return;
+  var isCollapsed = panel.classList.toggle('collapsed');
+  if (toggle) toggle.classList.toggle('hidden', isCollapsed);
+  savePanelState();
+}
+
+function savePanelState() {
+  var order = [];
+  document.querySelectorAll('.panel').forEach(function(p) {
+    order.push({
+      name: p.dataset.panel,
+      collapsed: p.classList.contains('collapsed')
+    });
+  });
+  localStorage.setItem('cliptalk-panels', JSON.stringify(order));
+}
+
+function restorePanelState() {
+  var saved = localStorage.getItem('cliptalk-panels');
+  if (!saved) return;
+  try {
+    var order = JSON.parse(saved);
+    order.forEach(function(item) {
+      var panel = document.getElementById('panel-' + item.name);
+      if (!panel) return;
+      if (item.collapsed) {
+        panel.classList.add('collapsed');
+        var toggle = document.getElementById('toggle-' + item.name);
+        if (toggle) toggle.classList.add('hidden');
+      }
+    });
+  } catch(e) {}
+}
+
+// ─── App ────────────────────────────────────────
+let socket, clipboardSyncing = false;
+
+function initApp() {
+  socket = io();
+
+  var statusDot = document.getElementById('status-dot');
+  var statusText = document.getElementById('status-text');
+  var clipboardArea = document.getElementById('clipboard-area');
+  var chatMessages = document.getElementById('chat-messages');
+  var chatInput = document.getElementById('chat-input');
+  var fileList = document.getElementById('file-list');
+  var dropZone = document.getElementById('drop-zone');
+
+  // ── 连接状态 ──
+  socket.on('connect', function() { statusDot.classList.remove('off'); statusText.textContent = t('workspace.connected'); });
+  socket.on('disconnect', function() { statusDot.classList.add('off'); statusText.textContent = t('workspace.disconnected'); });
+
+  function applySnapshot(data) {
+    clipboardArea.value = data.clipboardText || '';
+    chatMessages.replaceChildren();
+    (data.messages || []).forEach(function(message) { appendMsg(message, false); });
+    scrollChat();
+    renderFileList(data.files || []);
+  }
+  socket.on('init', applySnapshot);
+  socket.on('workspace-updated', applySnapshot);
+  socket.on('archives-updated', function() {
+    if (document.getElementById('archives-dialog').open) loadArchiveList();
+  });
+  socket.on('storage-updated', renderStorage);
+  socket.on('workspace-error', function(data) { showNotice(errorText(data.error)); });
+  socket.on('connect_error', function(error) {
+    if (error.message === 'unauthorized') window.location.href = '/login.html';
+  });
+
+  // ── 剪贴板同步 ──
+  clipboardArea.addEventListener('input', function() {
+    if (clipboardSyncing) return;
+    socket.emit('clipboard-update', clipboardArea.value);
+  });
+
+  socket.on('clipboard-update', function(text) {
+    clipboardSyncing = true; clipboardArea.value = text; clipboardSyncing = false;
+  });
+
+  window.copyToSystemClipboard = function() {
+    // 优先用 execCommand，Linux 兼容性最好
+    clipboardArea.select();
+    try {
+      var ok = document.execCommand('copy');
+      if (ok) {
+        appendMsg({type:'system',text:'✅ '+t('workspace.copied'),time:Date.now()}, true);
+        return;
+      }
+    } catch(e) {}
+    // 备用 Clipboard API
+    navigator.clipboard.writeText(clipboardArea.value).then(function() {
+      appendMsg({type:'system',text:'✅ '+t('workspace.copied'),time:Date.now()}, true);
+    }).catch(function() {
+      appendMsg({type:'system',text:'⚠ 复制失败，请手动 Ctrl+C',time:Date.now()}, true);
+    });
+  };
+
+  // Shift+Delete 复制选中文字到系统剪贴板
+  clipboardArea.addEventListener('keydown', function(e) {
+    if (e.key === 'Delete' && e.shiftKey) {
+      e.preventDefault();
+      var start = clipboardArea.selectionStart;
+      var end = clipboardArea.selectionEnd;
+      if (start === end) {
+        // 没有选中文字，全选再复制
+        clipboardArea.select();
+        document.execCommand('copy');
+        clipboardArea.setSelectionRange(start, start);
+        appendMsg({type:'system',text:'✅ 已复制全部内容',time:Date.now()}, true);
+      } else {
+        document.execCommand('copy');
+        appendMsg({type:'system',text:'✅ 已复制选中内容',time:Date.now()}, true);
+      }
+    }
+  });
+
+  window.clearClipboard = function() { clipboardArea.value = ''; socket.emit('clipboard-update', ''); };
+
+  // ── 聊天：Enter 发送，Shift+Enter 换行 ──
+  chatInput.addEventListener('keydown', function(e) {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      sendMessage();
+    }
+  });
+
+  // 自动增高 textarea
+  chatInput.addEventListener('input', function() {
+    chatInput.style.height = 'auto';
+    chatInput.style.height = Math.min(chatInput.scrollHeight, 120) + 'px';
+  });
+
+  window.sendMessage = function() {
+    var text = chatInput.value.trim();
+    if (!text) return;
+    if (!socket.connected) { showNotice(t('workspace.disconnected')); return; }
+    socket.emit('chat-message', { text: text }, function(result) {
+      if (!result.ok) { showNotice(errorText(result.error)); return; }
+      if (chatInput.value.trim() === text) { chatInput.value = ''; chatInput.style.height = 'auto'; }
+    });
+  };
+
+  socket.on('chat-message', function(msg) { appendMsg(msg, true); });
+
+  function appendMsg(msg, scroll) {
+    chatMessages.appendChild(messageElement(msg));
+    if (scroll) scrollChat();
+  }
+  function scrollChat() { chatMessages.scrollTop = chatMessages.scrollHeight; }
+
+  // ── 文件拖拽 ──
+  dropZone.addEventListener('dragover', function(e) { e.preventDefault(); dropZone.classList.add('drag-over'); });
+  dropZone.addEventListener('dragleave', function() { dropZone.classList.remove('drag-over'); });
+  dropZone.addEventListener('drop', function(e) {
+    e.preventDefault(); dropZone.classList.remove('drag-over');
+    if (e.dataTransfer.files.length > 0) uploadFiles(e.dataTransfer.files);
+  });
+
+  window.uploadFiles = async function(fileList) {
+    var formData = new FormData();
+    for (var i = 0; i < fileList.length; i++) formData.append('files', fileList[i]);
+    showNotice(t('workspace.uploading') + '...');
+    try {
+      var resp = await fetch('/upload', {method:'POST',body:formData});
+      var data = await resp.json();
+      if (!resp.ok) throw new Error(data.error || 'server_error');
+      showNotice(t('workspace.upload_done'));
+      document.getElementById('file-input').value = '';
+    } catch(e) {
+      showNotice(errorText(e.message));
+    }
+  };
+
+  socket.on('files-updated', function(files) { renderFileList(files); });
+
+  function renderFileList(files) { renderFiles(fileList, files, true); }
+  window.deleteFile = async function(name) {
+    if (!confirm(t('workspace.delete_file_confirm'))) return;
+    try { await api('/api/files/' + encodeURIComponent(name), {method:'DELETE'}); }
+    catch(error) { showNotice(errorText(error.message)); }
+  };
+
+  document.addEventListener('keydown', function(e) {
+    if (e.ctrlKey && e.key === 'k') { e.preventDefault(); chatInput.focus(); }
+  });
+}
+
+
+// ── Current-account workspace management ──
+let noticeTimer, selectedArchive = null;
+function showNotice(text) {
+  var notice = document.getElementById('notice');
+  notice.textContent = text; notice.hidden = false;
+  clearTimeout(noticeTimer); noticeTimer = setTimeout(function() { notice.hidden = true; }, 4500);
+}
+function errorText(code) {
+  var key = 'errors.' + code;
+  var value = t(key);
+  return value === key ? t('errors.server_error') : value;
+}
+async function api(url, options) {
+  var resp = await fetch(url, options);
+  var data = await resp.json();
+  if (resp.status === 401) { window.location.href = '/login.html'; throw new Error('unauthorized'); }
+  if (!resp.ok) throw new Error(data.error || 'server_error');
+  return data;
+}
+function jsonOptions(method, body) {
+  return {method:method, headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)};
+}
+function storageSize(bytes) {
+  return bytes >= 1073741824 ? (bytes / 1073741824).toFixed(2) + ' GB' : (bytes / 1048576).toFixed(2) + ' MB';
+}
+function renderStorage(storage) {
+  var usage = document.getElementById('storage-usage');
+  usage.textContent = storageSize(storage.usedBytes) + ' / ' + storageSize(storage.quotaBytes);
+  usage.title = t('workspace.storage_hint');
+  usage.style.color = storage.usedBytes >= storage.quotaBytes ? 'var(--danger)' : '';
+  document.getElementById('storage-progress').value = Math.min(100, storage.usedBytes / storage.quotaBytes * 100);
+}
+async function deleteArchive() {
+  if (!selectedArchive || !confirm(t('workspace.delete_archive_confirm'))) return;
+  try {
+    await api('/api/archives/' + encodeURIComponent(selectedArchive.id), jsonOptions('DELETE', {confirm:true}));
+    document.getElementById('archive-detail-dialog').close();
+    await loadArchiveList(); showNotice(t('workspace.archive_deleted'));
+  } catch(error) { showNotice(errorText(error.message)); }
+}
+function dateTime(time) {
+  return new Date(time).toLocaleString(lang === 'en' ? 'en-GB' : 'zh-CN', {timeZone:'Asia/Macau', hour12:false});
+}
+function today() {
+  var parts = new Intl.DateTimeFormat('en-CA', {timeZone:'Asia/Macau', year:'numeric', month:'2-digit', day:'2-digit'}).formatToParts(new Date());
+  function part(type) { return parts.find(function(p) { return p.type === type; }).value; }
+  return part('year') + '-' + part('month') + '-' + part('day');
+}
+function messageElement(message) {
+  var div = document.createElement('div');
+  div.className = 'chat-msg ' + (message.type === 'system' ? 'system' : 'user');
+  if (message.type !== 'system') {
+    var time = document.createElement('span'); time.className = 'time'; time.textContent = dateTime(message.time);
+    var sender = document.createElement('span'); sender.className = 'sender'; sender.textContent = message.from || '?';
+    div.append(time, sender);
+  }
+  var text = document.createElement('span'); text.className = 'msg-text'; text.textContent = message.text;
+  div.appendChild(text);
+  (message.files || []).forEach(function(file) {
+    var link = document.createElement('a'); link.textContent = ' 📥 ' + file.originalName;
+    link.href = '/uploads/' + encodeURIComponent(file.name); link.download = file.originalName;
+    div.appendChild(link);
+  });
+  return div;
+}
+function renderFiles(container, files, allowDelete) {
+  container.replaceChildren();
+  if (!files.length) {
+    var empty = document.createElement('p'); empty.className = 'muted'; empty.textContent = t('workspace.no_files'); container.appendChild(empty);
+  }
+  files.forEach(function(file) {
+    var div = document.createElement('div'); div.className = 'file-item';
+    var meta = document.createElement('div'); meta.className = 'file-meta';
+    var name = document.createElement('span'); name.className = 'fname'; name.textContent = file.originalName; name.title = file.originalName;
+    var time = document.createElement('span'); time.className = 'muted'; time.textContent = dateTime(file.time);
+    meta.append(name, time);
+    var size = document.createElement('span'); size.className = 'fsize';
+    size.textContent = file.size < 1024 ? file.size + ' B' : file.size < 1048576 ? (file.size / 1024).toFixed(1) + ' KB' : (file.size / 1048576).toFixed(1) + ' MB';
+    var link = document.createElement('a'); link.textContent = t('workspace.download');
+    link.href = '/uploads/' + encodeURIComponent(file.name); link.download = file.originalName;
+    div.append(meta, size, link);
+    if (allowDelete) {
+      var remove = document.createElement('button'); remove.className = 'small-btn danger'; remove.textContent = '✕';
+      remove.setAttribute('aria-label', t('workspace.delete_file')); remove.onclick = function() { deleteFile(file.name); }; div.appendChild(remove);
+    }
+    container.appendChild(div);
+  });
+}
+async function clearWorkspace(scope) {
+  if (!confirm(t(scope === 'chat' ? 'workspace.clear_chat_confirm' : 'workspace.clear_files_confirm'))) return;
+  try {
+    await api('/api/workspace/clear', jsonOptions('POST', {scope:scope, confirm:true}));
+    showNotice(t('workspace.cleared'));
+  } catch(error) { showNotice(errorText(error.message)); }
+}
+function openArchiveForm(scope) {
+  document.getElementById('archive-scope').value = scope;
+  document.getElementById('archive-start').value = today();
+  document.getElementById('archive-end').value = today();
+  document.getElementById('archive-title').value = today() + ' ' + t(scope === 'chat' ? 'workspace.chat' : scope === 'files' ? 'workspace.files' : 'workspace.chat_and_files');
+  document.getElementById('archive-form-error').textContent = '';
+  document.getElementById('archive-form-dialog').showModal();
+  document.getElementById('archive-title').focus();
+}
+document.getElementById('archive-form').addEventListener('submit', async function(event) {
+  event.preventDefault();
+  var button = document.getElementById('archive-submit'); button.disabled = true;
+  try {
+    await api('/api/archives', jsonOptions('POST', {
+      title:document.getElementById('archive-title').value,
+      startDate:document.getElementById('archive-start').value,
+      endDate:document.getElementById('archive-end').value,
+      scope:document.getElementById('archive-scope').value,
+    }));
+    document.getElementById('archive-form-dialog').close();
+    showNotice(t('workspace.archive_created'));
+    openArchiveList();
+  } catch(error) { document.getElementById('archive-form-error').textContent = errorText(error.message); }
+  finally { button.disabled = false; }
+});
+async function openArchiveList() {
+  var dialog = document.getElementById('archives-dialog');
+  if (!dialog.open) dialog.showModal();
+  await loadArchiveList();
+}
+async function loadArchiveList() {
+  var list = document.getElementById('archive-list');
+  try {
+    var archives = await api('/api/archives'); list.replaceChildren();
+    if (!archives.length) { var empty = document.createElement('p'); empty.className = 'muted'; empty.textContent = t('workspace.no_archives'); list.appendChild(empty); }
+    archives.forEach(function(archive) {
+      var card = document.createElement('div'); card.className = 'archive-card';
+      var content = document.createElement('div'); content.className = 'archive-text';
+      var title = document.createElement('strong'); title.textContent = archive.title;
+      var info = document.createElement('p'); info.className = 'muted';
+      info.textContent = (archive.start_date ? archive.start_date + ' ~ ' + archive.end_date : t('workspace.legacy_archive')) + ' · ' + archive.message_count + ' ' + t('workspace.message_count') + ' · ' + archive.file_count + ' ' + t('workspace.file_count');
+      var created = document.createElement('p'); created.className = 'muted'; created.textContent = dateTime(archive.created_at);
+      content.append(title, info, created);
+      var view = document.createElement('button'); view.className = 'small-btn'; view.textContent = t('workspace.view'); view.onclick = function() { openArchiveDetail(archive.id); };
+      card.append(content, view); list.appendChild(card);
+    });
+  } catch(error) { list.textContent = errorText(error.message); }
+}
+async function openArchiveDetail(id) {
+  try {
+    selectedArchive = await api('/api/archives/' + encodeURIComponent(id));
+    document.getElementById('archive-detail-title').textContent = selectedArchive.title;
+    document.getElementById('archive-rename-title').value = selectedArchive.title;
+    document.getElementById('archive-detail-info').textContent = selectedArchive.start_date ? selectedArchive.start_date + ' ~ ' + selectedArchive.end_date + ' · Asia/Macau' : t('workspace.legacy_archive');
+    var messages = document.getElementById('archive-messages'); messages.replaceChildren();
+    selectedArchive.messages.forEach(function(message) { messages.appendChild(messageElement(message)); });
+    if (!selectedArchive.messages.length) { var empty = document.createElement('p'); empty.className = 'muted'; empty.textContent = t('workspace.no_messages'); messages.appendChild(empty); }
+    renderFiles(document.getElementById('archive-files'), selectedArchive.files, false);
+    document.getElementById('archive-clipboard-section').hidden = !selectedArchive.clipboard_text;
+    document.getElementById('archive-clipboard').value = selectedArchive.clipboard_text || '';
+    var dialog = document.getElementById('archive-detail-dialog'); if (!dialog.open) dialog.showModal();
+  } catch(error) { showNotice(errorText(error.message)); }
+}
+document.getElementById('archive-rename-form').addEventListener('submit', async function(event) {
+  event.preventDefault();
+  if (!selectedArchive) return;
+  try {
+    await api('/api/archives/' + encodeURIComponent(selectedArchive.id), jsonOptions('PATCH', {title:document.getElementById('archive-rename-title').value}));
+    await openArchiveDetail(selectedArchive.id); showNotice(t('workspace.archive_renamed'));
+  } catch(error) { showNotice(errorText(error.message)); }
+});
+async function restoreArchive() {
+  if (!selectedArchive || !confirm(t('workspace.restore_confirm'))) return;
+  try {
+    await api('/api/archives/' + encodeURIComponent(selectedArchive.id) + '/restore', jsonOptions('POST', {}));
+    document.getElementById('archive-detail-dialog').close();
+    await loadArchiveList(); showNotice(t('workspace.archive_restored'));
+  } catch(error) { showNotice(errorText(error.message)); }
+}
+
+function doLogout() {
+  if (confirm(t('workspace.logout_confirm'))) {
+    fetch('/api/logout', {method:'POST'}).then(function() { window.location.href = '/login.html'; });
+  }
+}
+
+checkAuth();
+</script>
+</body>
+</html>

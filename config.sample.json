@@ -1,0 +1,8 @@
+{
+  "port": 8000,
+  "sessionSecret": "replace-with-a-random-session-secret",
+  "maxLoginAttempts": 5,
+  "loginWindowMinutes": 15,
+  "rateLimitWindowMs": 60000,
+  "rateLimitMax": 100
+}

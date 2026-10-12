@@ -1,0 +1,20 @@
+'use strict';
+const {test}=require('node:test');
+const assert=require('node:assert/strict');
+const fs=require('node:fs');
+const path=require('node:path');
+const os=require('node:os');
+const {initConfig}=require('../scripts/init-config');
+test('config generation creates private state, random secrets, custom ports and preserves existing secrets',t=>{
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'cliptalk-config-'));
+  t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
+  const filename=initConfig(dir,18000);
+  const first=JSON.parse(fs.readFileSync(filename,'utf8'));
+  assert.equal(first.port,18000);assert.equal(first.sessionSecret.length,64);
+  assert.equal(fs.statSync(filename).mode&0o777,0o600);
+  assert.ok(fs.existsSync(path.join(dir,'database')));assert.ok(fs.existsSync(path.join(dir,'uploads')));
+  initConfig(dir,19000);
+  const second=JSON.parse(fs.readFileSync(filename,'utf8'));
+  assert.equal(second.port,19000);assert.equal(second.sessionSecret,first.sessionSecret);
+  for(const invalid of [0,-1,65536,1.5])assert.throws(()=>initConfig(dir,invalid),/Invalid port/);
+});

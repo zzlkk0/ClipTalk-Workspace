@@ -1,0 +1,20 @@
+{
+  "name": "shared-workspace",
+  "version": "1.0.0",
+  "description": "实时共享工作区 - 剪贴板同步 + 聊天 + 文件传输",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "bcryptjs": "^3.0.3",
+    "better-sqlite3": "^12.11.1",
+    "express": "^4.21.0",
+    "express-rate-limit": "^8.5.2",
+    "express-session": "^1.19.0",
+    "helmet": "^8.2.0",
+    "multer": "2.4.0",
+    "socket.io": "^4.7.5",
+    "uuid": "^14.0.1"
+  }
+}

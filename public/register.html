@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>注册 — 共享工作区</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --bg: #0f0f14; --panel: #1a1a24; --border: #2a2a3a;
+    --text: #d0d0dc; --dim: #707088; --accent: #6c8cff;
+    --danger: #ff6b7a; --success: #50d890; --input: #14141e;
+  }
+  body {
+    font-family: -apple-system, "Segoe UI", "Noto Sans SC", sans-serif;
+    background: var(--bg); color: var(--text);
+    height: 100vh; display: flex; align-items: center; justify-content: center;
+  }
+  .container {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 12px; padding: 36px 40px;
+    width: 100%; max-width: 400px;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+  }
+  .logo-row { text-align: center; margin-bottom: 24px; }
+  .logo-row .icon { font-size: 36px; display: block; margin-bottom: 8px; }
+  .logo-row .title { font-size: 18px; font-weight: 700; color: var(--accent); }
+  .logo-row .subtitle { font-size: 12px; color: var(--dim); margin-top: 4px; }
+
+  .input-group { margin-bottom: 14px; }
+  .input-group label { display: block; font-size: 11px; color: var(--dim); margin-bottom: 5px; text-transform: uppercase; letter-spacing: 0.5px; }
+  .input-group input {
+    width: 100%; padding: 11px 14px;
+    border: 1px solid var(--border); background: var(--input);
+    color: var(--text); border-radius: 8px; font-size: 14px; outline: none;
+    transition: border-color 0.2s;
+  }
+  .input-group input:focus { border-color: var(--accent); }
+
+  .btn {
+    width: 100%; padding: 12px; border: none; border-radius: 8px;
+    font-size: 14px; font-weight: 600; cursor: pointer;
+    transition: opacity 0.15s; margin-top: 6px;
+  }
+  .btn-primary { background: var(--accent); color: #fff; }
+  .btn-primary:hover { opacity: 0.85; }
+  .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  .msg { text-align: center; font-size: 13px; margin-top: 12px; min-height: 20px; }
+  .msg.error { color: var(--danger); animation: shake 0.3s; }
+  .msg.success { color: var(--success); }
+
+  .link-row { text-align: center; font-size: 13px; margin-top: 16px; }
+  .link-row a { color: var(--accent); text-decoration: none; }
+  .link-row a:hover { text-decoration: underline; }
+
+  .lang-row { display: flex; justify-content: center; gap: 8px; margin-top: 16px; }
+  .lang-btn { padding: 4px 14px; border: 1px solid var(--border); background: transparent; color: var(--dim); border-radius: 14px; cursor: pointer; font-size: 12px; }
+  .lang-btn.active { border-color: var(--accent); color: var(--accent); }
+
+  @keyframes shake {
+    0%,100%{transform:translateX(0)} 20%,60%{transform:translateX(-5px)} 40%,80%{transform:translateX(5px)}
+  }
+</style>
+</head>
+<body>
+
+<div class="container">
+  <div class="logo-row">
+    <span class="icon">👤</span>
+    <div class="title" data-t="register.heading">创建账号</div>
+    <div class="subtitle" data-t="register.subheading">注册后需等待管理员审批</div>
+  </div>
+
+  <div class="input-group">
+    <label data-t="register.username">用户名</label>
+    <input type="text" id="username" data-t-placeholder="register.placeholder_username" placeholder="3-20位字母数字…" autofocus>
+  </div>
+
+  <div class="input-group">
+    <label data-t="register.password">密码</label>
+    <input type="password" id="password" data-t-placeholder="register.placeholder_password" placeholder="至少6位…">
+  </div>
+
+  <div class="input-group">
+    <label data-t="register.confirm_password">确认密码</label>
+    <input type="password" id="confirm" data-t-placeholder="register.placeholder_confirm" placeholder="再次输入密码…" onkeydown="if(event.key==='Enter')doRegister()">
+  </div>
+
+  <button class="btn btn-primary" id="btn" onclick="doRegister()" data-t="register.btn_register">注册</button>
+
+  <div class="msg" id="msg"></div>
+
+  <div class="link-row">
+    <span data-t="register.has_account">已有账号？</span>
+    <a href="/login.html" data-t="register.login_link">返回登录</a>
+  </div>
+
+  <div class="lang-row">
+    <button class="lang-btn active" onclick="switchLang('zh-CN')">中文</button>
+    <button class="lang-btn" onclick="switchLang('en')">English</button>
+  </div>
+</div>
+
+<script>
+let lang = localStorage.getItem('lang') || 'zh-CN';
+let i18n = {};
+
+// 加载语言包
+async function loadLang(l) {
+  try {
+    const resp = await fetch('/api/i18n/' + l);
+    i18n = await resp.json();
+    lang = l;
+    localStorage.setItem('lang', l);
+    fetch('/api/lang', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({lang:l}) });
+    applyLang();
+    updateLangBtns();
+  } catch(e) {}
+}
+
+function t(path) { return path.split('.').reduce((o,k) => (o||{})[k], i18n) || path; }
+
+function applyLang() {
+  document.querySelectorAll('[data-t]').forEach(el => { el.textContent = t(el.dataset.t); });
+  document.querySelectorAll('[data-t-placeholder]').forEach(el => { el.placeholder = t(el.dataset.tPlaceholder); });
+  document.title = t('register.title') || document.title;
+}
+
+function updateLangBtns() {
+  document.querySelectorAll('.lang-btn').forEach(b => {
+    b.classList.toggle('active', b.textContent.trim() === (lang==='en' ? 'English' : '中文'));
+  });
+}
+
+function switchLang(l) { loadLang(l); }
+
+async function doRegister() {
+  const username = document.getElementById('username').value.trim();
+  const password = document.getElementById('password').value;
+  const confirm = document.getElementById('confirm').value;
+  const btn = document.getElementById('btn');
+  const msg = document.getElementById('msg');
+
+  msg.className = 'msg'; msg.textContent = '';
+
+  if (!username) { msg.className = 'msg error'; msg.textContent = t('register.error_empty_username'); return; }
+  if (!password) { msg.className = 'msg error'; msg.textContent = t('register.error_empty_password'); return; }
+  if (password !== confirm) { msg.className = 'msg error'; msg.textContent = t('register.error_password_mismatch'); return; }
+  if (password.length < 6) { msg.className = 'msg error'; msg.textContent = t('register.error_password_short'); return; }
+
+  btn.disabled = true;
+  try {
+    const resp = await fetch('/api/register', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({username, password})
+    });
+    const data = await resp.json();
+    if (data.ok) {
+      if (data.autoApproved) {
+        msg.className = 'msg success';
+        msg.textContent = t('register.success_auto');
+        setTimeout(() => { window.location.href = '/login.html'; }, 1500);
+      } else {
+        msg.className = 'msg success';
+        msg.textContent = t('register.success_pending');
+      }
+    } else {
+      msg.className = 'msg error';
+      msg.textContent = t('register.' + data.error) || data.error;
+    }
+  } catch(e) {
+    msg.className = 'msg error';
+    msg.textContent = t('register.error_network');
+  }
+  btn.disabled = false;
+}
+
+// 初始化
+loadLang(lang);
+</script>
+</body>
+</html>
