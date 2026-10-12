@@ -115,7 +115,7 @@
 <body>
 
 <div class="topbar">
-  <span class="logo">⚙️ 管理面板</span>
+  <span class="logo">⚙️ <span data-site-name>共享工作区</span> · 管理面板</span>
   <span id="top-stats" style="color:var(--dim);font-size:13px"></span>
   <span class="spacer"></span>
   <a href="/">← 返回工作区</a>
@@ -124,6 +124,7 @@
 
 <div id="app"><div class="center-msg"><span class="spin"></span>加载中...</div></div>
 
+<script src="/ui.js"></script>
 <script>
 function esc(s){const d=document.createElement('div');d.textContent=s||'';return d.innerHTML}
 
@@ -137,6 +138,8 @@ async function load(){
     const users=await uResp.json();
     const stats=await sResp.json();
     const settings=await setResp.json();
+    ClipTalkUI.updateSite({siteName:settings.site_name});
+    ClipTalkUI.applyBrand('共享工作区','管理面板');
     if(!storageResp.ok)throw new Error('无法读取容量设置');
     const storage=await storageResp.json();
 
@@ -203,6 +206,7 @@ async function load(){
     // 系统设置
     h+='<div class="card">';
     h+='<div class="card-header">⚡ 系统设置</div>';
+    h+='<div class="input-line"><label for="site-name">网站名称</label><input id="site-name" maxlength="80" placeholder="共享工作区（默认）"><button class="btn btn-ok" id="save-site-name" onclick="saveSiteName()">保存名称</button><span id="site-name-msg" class="toast"></span></div>';
     h+='<div class="setting-row">';
     h+='<label>审批模式</label>';
     h+='<div class="toggle-group">';
@@ -225,9 +229,19 @@ async function load(){
 
     h+='</div>';
     app.innerHTML=h;
+    document.getElementById('site-name').value=settings.site_name||'';
   }catch(e){
     app.innerHTML='<div class="center-msg err">⚠ 加载失败: '+esc(e.message)+'</div>';
   }
+}
+async function saveSiteName(){
+  const message=document.getElementById('site-name-msg');
+  try{
+    const site_name=document.getElementById('site-name').value.trim();
+    const response=await fetch('/api/admin/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({site_name})});
+    if(!response.ok)throw new Error('网站名称最多80个字符，不能包含控制字符');
+    ClipTalkUI.updateSite({siteName:site_name});message.textContent='已保存';message.style.color='var(--green)';
+  }catch(error){message.textContent=error.message;message.style.color='var(--red)';}
 }
 
 function formatBytes(bytes){return bytes>=1073741824?(bytes/1073741824).toFixed(2)+' GB':(bytes/1048576).toFixed(2)+' MB'}

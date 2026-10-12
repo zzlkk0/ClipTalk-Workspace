@@ -34,6 +34,7 @@ function init(dataDir = __dirname) {
   const defaults = {
     approval_mode: 'manual',
     registration_enabled: 'true',
+    site_name: '',
   };
   for (const [key, value] of Object.entries(defaults)) {
     const row = db.prepare('SELECT value FROM settings WHERE key = ?').get(key);
@@ -123,6 +124,13 @@ function changePassword(id, newPassword) {
   return db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(hash, id);
 }
 
+function updateAccount(id, username, password) {
+  return db.transaction(() => {
+    db.prepare('UPDATE users SET username = ? WHERE id = ?').run(username, id);
+    if (password) changePassword(id, password);
+  })();
+}
+
 // ─── 设置 ───────────────────────────────────────
 
 function getSetting(key) {
@@ -155,6 +163,7 @@ module.exports = {
   setUserStatus,
   deleteUser,
   changePassword,
+  updateAccount,
   getSetting,
   setSetting,
   getStats,

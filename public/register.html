@@ -67,6 +67,7 @@
 
 <div class="container">
   <div class="logo-row">
+    <div class="subtitle" data-site-name>共享工作区</div>
     <span class="icon">👤</span>
     <div class="title" data-t="register.heading">创建账号</div>
     <div class="subtitle" data-t="register.subheading">注册后需等待管理员审批</div>
@@ -102,6 +103,7 @@
   </div>
 </div>
 
+<script src="/ui.js"></script>
 <script>
 let lang = localStorage.getItem('lang') || 'zh-CN';
 let i18n = {};
@@ -124,7 +126,7 @@ function t(path) { return path.split('.').reduce((o,k) => (o||{})[k], i18n) || p
 function applyLang() {
   document.querySelectorAll('[data-t]').forEach(el => { el.textContent = t(el.dataset.t); });
   document.querySelectorAll('[data-t-placeholder]').forEach(el => { el.placeholder = t(el.dataset.tPlaceholder); });
-  document.title = t('register.title') || document.title;
+  ClipTalkUI.applyBrand(t('app.title'), t('register.btn_register'));
 }
 
 function updateLangBtns() {

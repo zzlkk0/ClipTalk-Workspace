@@ -1,0 +1,12 @@
+<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>我的账号</title><link rel="stylesheet" href="/pages.css"><script src="/ui.js" defer></script><script src="/account.js" defer></script></head><body>
+<header><a class="brand" href="/">⚡ <span data-site-name>共享工作区</span></a><a href="/" data-t="admin.back_to_workspace">返回工作区</a><button id="language-button">中文 / EN</button></header>
+<main class="account-main"><h1 data-t="account.title">我的账号</h1><p class="muted" data-t="account.hint">修改用户名或密码后，其他设备需要重新登录，已有内容保留。</p><p id="page-notice" class="notice" role="status" hidden></p>
+<section class="card"><h2 data-t="account.edit">修改账号</h2><form id="account-form">
+<label for="account-username" data-t="login.username">用户名</label><input id="account-username" required minlength="3" maxlength="20" pattern="[a-zA-Z0-9_-]{3,20}" autocomplete="username">
+<label for="account-password" data-t="account.current_password">当前密码</label><input id="account-password" type="password" required autocomplete="current-password">
+<label for="account-new-password" data-t="account.new_password">新密码（留空则不修改）</label><input id="account-new-password" type="password" minlength="6" maxlength="72" autocomplete="new-password">
+<label for="account-confirm-password" data-t="register.confirm_password">确认新密码</label><input id="account-confirm-password" type="password" autocomplete="new-password">
+<div class="actions"><button class="primary" type="submit" data-t="admin.btn_save">保存</button></div></form></section>
+<section class="card"><h2 class="danger" data-t="account.delete">删除本账号</h2><p data-t="account.delete_hint">永久删除本账号的剪贴板、对话、文件、归档和分享，并退出所有设备。已经接收的文件副本仍属于接收者。</p><p id="last-admin-hint" class="hint" data-t="account.last_admin_hint" hidden>系统必须保留一个有效管理员，最后一个管理员不能删除账号。</p>
+<form id="delete-account-form"><label for="delete-username" data-t="account.type_username">输入当前用户名确认</label><input id="delete-username" required autocomplete="off"><label for="delete-password" data-t="account.current_password">当前密码</label><input id="delete-password" type="password" required autocomplete="current-password"><div class="actions"><button class="danger" type="submit" data-t="account.delete">删除本账号</button></div></form></section>
+</main></body></html>

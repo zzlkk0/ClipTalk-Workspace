@@ -69,8 +69,8 @@
 <div class="container">
   <div class="logo-row">
     <span class="icon">🔒</span>
-    <div class="title" data-t="login.heading">共享工作区</div>
-    <div class="subtitle" data-t="login.subheading">端到端加密通信 · 需密码访问</div>
+    <div class="title" data-site-name>共享工作区</div>
+    <div class="subtitle" data-t="login.subheading">账号独立 · 登录后访问</div>
   </div>
 
   <div class="input-group">
@@ -100,6 +100,7 @@
   <div class="hint" data-t="login.hint">通信通过 HTTPS + WSS 加密</div>
 </div>
 
+<script src="/ui.js"></script>
 <script>
 let lang = localStorage.getItem('lang') || 'zh-CN';
 let i18n = {};
@@ -119,7 +120,7 @@ function t(path) { return path.split('.').reduce((o,k)=>(o||{})[k], i18n) || pat
 function applyLang() {
   document.querySelectorAll('[data-t]').forEach(el => { el.textContent = t(el.dataset.t); });
   document.querySelectorAll('[data-t-placeholder]').forEach(el => { el.placeholder = t(el.dataset.tPlaceholder); });
-  document.title = t('login.title') || document.title;
+  ClipTalkUI.applyBrand(t('login.heading'), t('login.btn_login'));
 }
 
 function updateLangBtns() {
@@ -148,7 +149,8 @@ async function doLogin() {
     });
     const data = await resp.json();
     if (data.ok) {
-      window.location.href = data.redirect;
+      const next = new URLSearchParams(location.search).get('next') || '';
+      window.location.href = /^\/(share\/[a-f0-9]{64}|sharing\.html|account\.html)$/.test(next) ? next : data.redirect;
     } else {
       msg.className = 'msg error';
       const errKey = 'login.error_' + data.error;

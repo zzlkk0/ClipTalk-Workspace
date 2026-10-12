@@ -132,7 +132,7 @@ if tar -tzf "$work_dir/source.tar.gz" | awk '/^\// || /(^|\/)\.\.($|\/)/ {bad=1}
   printf 'Unsafe archive paths.\n' >&2; exit 1
 fi
 tar -xzf "$work_dir/source.tar.gz" --strip-components=1 -C "$release_dir"
-for required in server.js workspace-store.js quota-storage.js package-lock.json; do [[ -f "$release_dir/$required" ]] || { printf 'Incomplete release.\n' >&2; exit 1; }; done
+for required in server.js workspace-store.js sharing-store.js quota-storage.js package-lock.json; do [[ -f "$release_dir/$required" ]] || { printf 'Incomplete release.\n' >&2; exit 1; }; done
 
 if [[ "$mode" == native ]]; then
   node_bin=''

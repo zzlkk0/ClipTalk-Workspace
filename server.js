@@ -9,6 +9,8 @@ const { Server } = require('socket.io');
 const multer = require('multer');
 const { QuotaStorage } = require('./quota-storage');
 const { WorkspaceStore, TIMEZONE } = require('./workspace-store');
+const { SharingStore } = require('./sharing-store');
+const { randomUUID } = require('crypto');
 const db = require('./db');
 
 // ─── 配置 ───────────────────────────────────────
@@ -23,7 +25,8 @@ const MAX_FILE_SIZE = 500 * 1024 * 1024;
 // ─── 数据库初始化 ───────────────────────────────
 db.init(DATA_DIR);
 const workspace = new WorkspaceStore(DATA_DIR, db.listUsers());
-const RELEASE = '20261013-0000';
+const sharing = new SharingStore(workspace, db);
+const RELEASE = '20261013-sharing';
 
 // ── Express & HTTP ────────────────────────────
 const app = express();
@@ -51,12 +54,9 @@ app.use(helmet({
   referrerPolicy: { policy: 'no-referrer' },
 }));
 
-// 显式追加 Content-Type charset
+// Let Express choose the content type for HTML, JSON, scripts and downloads.
 app.use((req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
-  if (!res.getHeader('Content-Type')) {
-    res.setHeader('Content-Type', 'text/html; charset=utf-8');
-  }
   next();
 });
 
@@ -68,7 +68,9 @@ app.use('/api', (req, res, next) => {
 
 // 静态资源缓存
 app.use((req, res, next) => {
-  if (req.path.match(/\.(js|css|png|svg|ico)$/)) {
+  if (req.path.match(/\.(js|css)$/)) {
+    res.setHeader('Cache-Control', 'no-cache, must-revalidate');
+  } else if (req.path.match(/\.(png|svg|ico)$/)) {
     res.setHeader('Cache-Control', 'public, max-age=86400');
   } else if (req.path.match(/\.html$/) || req.path === '/') {
     res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
@@ -94,7 +96,9 @@ app.use(globalLimiter);
 app.use(express.json({ limit: '1mb' }));
 
 // ─── Session ────────────────────────────────────
+const sessionStore = new session.MemoryStore();
 const sessionMiddleware = session({
+  store: sessionStore,
   secret: config.sessionSecret,
   resave: false,
   saveUninitialized: false,
@@ -203,6 +207,46 @@ app.get('/api/me', requireAuth, (req, res) => {
   res.json(user);
 });
 
+async function invalidateSessions(owner, keep) {
+  const sessions = await new Promise((resolve, reject) => sessionStore.all((error, rows) => error ? reject(error) : resolve(rows || {})));
+  await Promise.all(Object.entries(sessions).filter(([id, value]) => id !== keep && value.userId === owner)
+    .map(([id]) => new Promise((resolve, reject) => sessionStore.destroy(id, error => error ? reject(error) : resolve()))));
+  const room = io.in(ownerRoom(owner));
+  if (keep) room.except('session:' + keep).emit('account-invalidated');
+  else room.emit('account-invalidated');
+  if (keep) room.except('session:' + keep).disconnectSockets(true);
+  else room.disconnectSockets(true);
+}
+
+app.patch('/api/account', requireAuth, async (req, res, next) => {
+  try {
+    const { currentPassword, username, newPassword } = req.body;
+    const user = db.getUserById(req.session.userId);
+    if (typeof currentPassword !== 'string' || !db.verifyUser(user.username, currentPassword)) return res.status(401).json({ error: 'wrong_password' });
+    const name = username === undefined ? user.username : username;
+    if (typeof name !== 'string' || !/^[a-zA-Z0-9_-]{3,20}$/.test(name)) return res.status(400).json({ error: 'username_format' });
+    if (newPassword !== undefined && (typeof newPassword !== 'string' || newPassword.length < 6)) return res.status(400).json({ error: 'password_short' });
+    if (newPassword && Buffer.byteLength(newPassword) > 72) return res.status(400).json({ error: 'password_long' });
+    const existing = db.getUserByUsername(name);
+    if (existing && existing.id !== user.id) return res.status(409).json({ error: 'username_taken' });
+    db.updateAccount(user.id, name, newPassword);
+    req.session.username = name;
+    await invalidateSessions(user.id, req.sessionID);
+    res.json({ ok: true, user: db.getUserById(user.id) });
+  } catch (error) { next(error); }
+});
+
+app.delete('/api/account', requireAuth, async (req, res, next) => {
+  try {
+    const user = db.getUserById(req.session.userId);
+    if (req.body.confirm !== true || req.body.username !== user.username) return res.status(400).json({ error: 'confirmation_required' });
+    if (typeof req.body.currentPassword !== 'string' || !db.verifyUser(user.username, req.body.currentPassword)) return res.status(401).json({ error: 'wrong_password' });
+    workspace.deleteAccount(user.id);
+    await invalidateSessions(user.id);
+    req.session.destroy(() => { res.clearCookie('connect.sid'); res.json({ ok: true }); });
+  } catch (error) { next(error); }
+});
+
 // ─── 注册 API ───────────────────────────────────
 app.post('/api/register', (req, res) => {
   const regEnabled = db.getSetting('registration_enabled');
@@ -258,9 +302,10 @@ app.post('/api/admin/users/:id/status', requireAuth, requireAdmin, (req, res) =>
 });
 
 app.delete('/api/admin/users/:id', requireAuth, requireAdmin, (req, res) => {
-  const r = db.deleteUser(req.params.id);
-  if (r.changes === 0) return res.status(404).json({ error: 'not_found' });
-  res.json({ ok: true });
+  const user = db.getUserById(req.params.id);
+  if (!user || user.role === 'admin') return res.status(404).json({ error: 'not_found' });
+  workspace.deleteAccount(user.id);
+  invalidateSessions(user.id).then(() => res.json({ ok: true })).catch(error => res.status(500).json({ error: 'server_error' }));
 });
 
 // 修改管理员密码
@@ -286,11 +331,17 @@ app.get('/api/admin/settings', requireAuth, requireAdmin, (req, res) => {
   res.json({
     approval_mode: db.getSetting('approval_mode'),
     registration_enabled: db.getSetting('registration_enabled'),
+    site_name: db.getSetting('site_name'),
   });
 });
 
 app.post('/api/admin/settings', requireAuth, requireAdmin, (req, res) => {
-  const { approval_mode, registration_enabled } = req.body;
+  const { approval_mode, registration_enabled, site_name } = req.body;
+  if (site_name !== undefined) {
+    if (typeof site_name !== 'string' || site_name.trim().length > 80 || /[\x00-\x1f\x7f]/.test(site_name)) return res.status(400).json({ error: 'invalid_site_name' });
+    db.setSetting('site_name', site_name.trim());
+    io.emit('site-updated', { siteName: site_name.trim() });
+  }
   if (approval_mode && ['auto', 'manual'].includes(approval_mode)) {
     db.setSetting('approval_mode', approval_mode);
   }
@@ -299,6 +350,8 @@ app.post('/api/admin/settings', requireAuth, requireAdmin, (req, res) => {
   }
   res.json({ ok: true });
 });
+
+app.get('/api/site', (req, res) => res.json({ siteName: db.getSetting('site_name') || '' }));
 
 // Every workspace API derives the owner from the authenticated session.
 app.get('/api/health', (req, res) => res.json({ ok: true, release: RELEASE }));
@@ -405,6 +458,59 @@ app.delete('/api/files/:name', requireAuth, (req, res) => {
   res.json({ ok: true });
 });
 
+// Sharing is an explicit permission grant. The original /uploads endpoint
+// remains owner-only, even for recipients of a shared file.
+app.get('/api/share-users', requireAuth, (req, res) => res.json(db.listUsers()
+  .filter(user => user.status === 'active' && user.id !== req.session.userId).map(user => ({ username: user.username }))));
+app.get('/api/share-files', requireAuth, (req, res) => res.json(sharing.availableFiles(req.session.userId)));
+app.get('/api/shares', requireAuth, (req, res) => res.json(sharing.list(req.session.userId)));
+app.post('/api/shares', requireAuth, (req, res) => res.status(201).json(sharing.create(req.session.userId, req.body)));
+app.patch('/api/shares/:token', requireAuth, (req, res) => res.json(sharing.update(req.session.userId, req.params.token, req.body)));
+app.delete('/api/shares/:token', requireAuth, (req, res) => {
+  sharing.revoke(req.session.userId, req.params.token);
+  emitStorage(req.session.userId);
+  res.json({ ok: true });
+});
+function shareViewer(req) {
+  const user = req.session?.userId && db.getUserById(req.session.userId);
+  return user?.status === 'active' ? user.id : null;
+}
+app.get('/api/shares/:token', (req, res) => res.json(sharing.info(sharing.access(req.params.token, shareViewer(req)), shareViewer(req))));
+app.get('/api/shares/:token/download', (req, res, next) => {
+  const share = sharing.access(req.params.token, shareViewer(req));
+  res.download(path.join(UPLOADS_DIR, share.asset_name), share.original_name, error => {
+    if (error && !res.headersSent) next(Object.assign(new Error('not_found'), { status: 404 }));
+  });
+});
+app.post('/api/shares/:token/import', requireAuth, async (req, res, next) => {
+  let destination;
+  try {
+    const owner = req.session.userId;
+    const share = sharing.access(req.params.token, owner);
+    if (share.owner_id === owner) return res.status(400).json({ error: 'already_owned' });
+    storage.reserve(req, share.size + Buffer.byteLength('📎 ' + share.original_name));
+    const name = Date.now() + '_' + randomUUID();
+    destination = path.join(UPLOADS_DIR, name);
+    await fs.promises.copyFile(path.join(UPLOADS_DIR, share.asset_name), destination, fs.constants.COPYFILE_EXCL);
+    await fs.promises.chmod(destination, 0o600);
+    const user = db.getUserById(owner);
+    if (req.aborted || !user || user.status !== 'active') throw Object.assign(new Error('unauthorized'), { status: 401 });
+    sharing.access(req.params.token, owner); // A revoked share cannot finish an in-flight import.
+    storage.release(req);
+    workspace.addUpload(owner, user.username, [{ name, originalName: share.original_name, size: share.size, time: Date.now() }]);
+    destination = null;
+    emitSnapshot(owner);
+    res.status(201).json({ ok: true });
+  } catch (error) { next(error); }
+  finally {
+    storage.release(req);
+    if (destination) await fs.promises.rm(destination, { force: true }).catch(() => {});
+  }
+});
+
+app.get('/sharing.html', requireAuth, (req, res) => res.sendFile(path.join(__dirname, 'public', 'sharing.html')));
+app.get('/share/:token', (req, res) => res.sendFile(path.join(__dirname, 'public', 'share.html')));
+
 app.use(express.static(path.join(__dirname, 'public')));
 app.use((error, req, res, next) => {
   if (res.headersSent) return next(error);
@@ -425,12 +531,11 @@ io.use((socket, next) => {
 });
 io.on('connection', socket => {
   const owner = socket.request.session.userId;
-  const username = socket.request.session.username;
   socket.join(ownerRoom(owner));
   socket.join('session:' + socket.request.sessionID);
   socket.emit('init', workspace.snapshot(owner));
   emitStorage(owner);
-  socket.emit('user-info', { username, role: socket.request.session.role, lang: socket.request.session.lang || 'zh-CN' });
+  socket.emit('user-info', { username: db.getUserById(owner).username, role: socket.request.session.role, lang: socket.request.session.lang || 'zh-CN' });
 
   // A logged-out or disabled account cannot keep using an existing socket.
   socket.use((packet, next) => {
@@ -458,7 +563,7 @@ io.on('connection', socket => {
     const reply = typeof acknowledge === 'function' ? acknowledge : () => {};
     if (!message || typeof message.text !== 'string' || !message.text.trim() || message.text.length > 10000) return reply({ ok: false, error: 'invalid_message' });
     try {
-      const saved = workspace.addMessage(owner, { type: 'user', text: message.text, time: Date.now(), from: username });
+      const saved = workspace.addMessage(owner, { type: 'user', text: message.text, time: Date.now(), from: db.getUserById(owner).username });
       io.to(ownerRoom(owner)).emit('chat-message', saved);
       emitStorage(owner); reply({ ok: true });
     } catch (error) {

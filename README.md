@@ -6,7 +6,7 @@ Docker is optional. You can run ClipTalk directly with Node.js, use the native i
 
 ## Features
 
-- **Account isolation:** clipboard, chat, files, downloads and archives belong to the signed-in account. Other users, including administrators, cannot read that account's content through the application.
+- **Account isolation:** clipboard, chat, files, downloads and archives belong to the signed-in account. Other users, including administrators, can access a file only when its owner explicitly shares it.
 - **Device sync:** devices using the same account receive live updates through Socket.IO.
 - **Clear active content:** clear conversations or files after confirmation. Existing archives remain available.
 - **Named date archives:** select a start date, end date and content type. Create, rename, view, download, restore or delete an archive. Dates include both days and use `Asia/Macau` (UTC+8).
@@ -14,6 +14,18 @@ Docker is optional. You can run ClipTalk directly with Node.js, use the native i
 - **Upload limits:** at most 10 files per request and 500 MB per file, within the account's remaining quota. Concurrent uploads from the same account share a quota.
 - **User administration:** registration, approval, disabling accounts and password management.
 - **Languages:** Chinese and English in the workspace and sign-in pages.
+- **Custom site name:** administrators can change the name next to the logo in the system settings. It also appears on sign-in, registration, account and sharing pages.
+- **Personal account management:** click your username to change your username or password, or delete your account after confirming your username and current password. Account changes sign other devices out. Deletion removes owned workspace data and shares; the last active administrator is protected.
+- **Archive reader:** archived conversations open in a larger chat-style window with a file sidebar, message search and a full-screen toggle.
+- **File sharing:** one header button opens a separate sharing page. Share active or archived files with selected users or create a public link. Owners can change permissions and revoke links. Recipients can download or receive an independent copy into their own space.
+
+## Sharing files
+
+Open **File sharing** in the workspace header, choose a file, and select **Selected users** or **Public**. A selected-user link requires sign-in with an allowed account. A public link allows anyone holding it to download, and signed-in users can also browse public shares in the sharing page. Paste a link from the same website into **Enter a share link** to open it.
+
+The original file continues to count toward its owner's quota. Receiving a file creates a separate copy and counts toward the recipient's quota, including simultaneous receives and uploads. Revoking a share makes its original link stop working; downloaded or received copies remain. Removing the original file after its last active or archived reference is gone also invalidates its shares. Ordinary private download URLs remain owner-only.
+
+Account deletion removes current account records and owned clipboard, messages, file bodies, archives, quotas and shares. Copies already received by other users remain theirs. Deployment backups are managed separately under the installation directory's private `backups/` folder.
 
 ## One-command native deployment — no Docker
 
