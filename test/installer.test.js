@@ -10,6 +10,15 @@ const {promisify}=require('node:util');
 const run=promisify(execFile);
 const root=path.join(__dirname,'..');
 function executable(file,text){fs.writeFileSync(file,text,{mode:0o755});}
+function isolatedInstaller(dir,release){
+  fs.writeFileSync(path.join(dir,'os-release'),release);
+  fs.mkdirSync(path.join(dir,'systemd'));
+  const script=path.join(dir,'deploy.sh');
+  fs.writeFileSync(script,fs.readFileSync(path.join(root,'deploy.sh'),'utf8')
+    .replaceAll('/etc/os-release',path.join(dir,'os-release'))
+    .replaceAll('/run/systemd/system',path.join(dir,'systemd')));
+  return script;
+}
 
 test('installer options validate without touching packages or services',async()=>{
   await run('bash',['-n',path.join(root,'deploy.sh')]);
@@ -22,11 +31,42 @@ test('installer options validate without touching packages or services',async()=
   }
 });
 
-test('native installer: fresh startup, persistent update and failure rollback with mocked host service commands',async t=>{
-  if(!fs.existsSync('/run/systemd/system'))return t.skip('The host systemd marker is unavailable');
+test('native installer rejects old glibc before changing packages, data or services',async t=>{
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'cliptalk-old-glibc-'));
+  t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
+  const bin=path.join(dir,'bin');fs.mkdirSync(bin);
+  const script=isolatedInstaller(dir,'ID=alinux\nID_LIKE="rhel fedora centos anolis"\nVERSION_ID=2\n');
+  executable(path.join(bin,'dnf'),'#!/bin/sh\nprintf "Package installation must not run\\n" >&2\nexit 99\n');
+  for(const version of ['2.17','2.26']){
+    executable(path.join(bin,'getconf'),'#!/bin/sh\nprintf "glibc '+version+'\\n"\n');
+    await assert.rejects(run('bash',[script,'--dir',path.join(dir,'app')],{env:{...process.env,PATH:bin+path.delimiter+process.env.PATH}}),
+      error=>error.code===1&&error.stderr.includes('requires glibc 2.28 or newer'));
+    assert.equal(fs.existsSync(path.join(dir,'app')),false);
+  }
+});
+
+for(const platform of [
+  {name:'Ubuntu/Debian',manager:'apt-get',release:'ID=debian\nVERSION_ID=12\nPRETTY_NAME="Debian test fixture"\n'},
+  {name:'Alibaba Cloud Linux 3 with dnf',manager:'dnf',release:'ID=alinux\nID_LIKE="rhel fedora centos anolis"\nVERSION_ID=3\nPRETTY_NAME="Alibaba Cloud Linux 3"\n'},
+  {name:'Alibaba Cloud Linux 3 with yum fallback',manager:'yum',release:'ID=alinux\nID_LIKE="rhel fedora centos anolis"\nVERSION_ID=3\nPRETTY_NAME="Alibaba Cloud Linux 3"\n'}
+]) test('native installer on '+platform.name+': fresh startup, persistent update and rollback with mocked host commands',async t=>{
   const dir=fs.mkdtempSync(path.join(os.tmpdir(),'cliptalk-installer-'));
   const bin=path.join(dir,'bin'),target=path.join(dir,'app'),source=path.join(dir,'source');
   fs.mkdirSync(bin);fs.mkdirSync(source);
+  const script=isolatedInstaller(dir,platform.release);
+  executable(path.join(bin,'getconf'),'#!/bin/sh\nprintf "glibc 2.32\\n"\n');
+  for(const manager of ['apt-get','dnf','yum'])executable(path.join(bin,manager),`#!/usr/bin/env python3
+import json,os,pathlib,sys
+with open(os.environ['CLIPTALK_INSTALL_TEST_ROOT']+'/packages.log','a') as log:
+ log.write(json.dumps([pathlib.Path(sys.argv[0]).name]+sys.argv[1:])+'\\n')
+`);
+  const shellEnv=path.join(dir,'shell-env');
+  fs.writeFileSync(shellEnv,`command() {
+  if [[ "$1" == -v && "$2" == g++ ]]; then return 1; fi
+  if [[ "$1" == -v && "$2" == dnf && "$CLIPTALK_INSTALL_TEST_MANAGER" == yum ]]; then return 1; fi
+  builtin command "$@"
+}
+`);
   const publicFiles=['server.js','db.js','workspace-store.js','quota-storage.js','package.json','package-lock.json','scripts','public','i18n','deploy.sh'];
   for(const file of publicFiles)fs.cpSync(path.join(root,file),path.join(source,file),{recursive:true});
   const archive=path.join(dir,'source.tar.gz');execFileSync('tar',['-czf',archive,'-C',dir,'source']);
@@ -73,13 +113,19 @@ elif command=='restart':
 elif command not in ['daemon-reload','enable']:raise RuntimeError('Unexpected service action')
 `);
   const env={...process.env,PATH:bin+path.delimiter+process.env.PATH,
+    BASH_ENV:shellEnv,CLIPTALK_INSTALL_TEST_MANAGER:platform.manager,
     CLIPTALK_INSTALL_TEST_ROOT:dir,CLIPTALK_INSTALL_TEST_ARCHIVE:archive,
     CLIPTALK_INSTALL_TEST_MODULES:path.join(root,'node_modules')};
   t.after(async()=>{await run(path.join(bin,'systemctl'),['stop','cliptalk-workspace.service'],{env});fs.rmSync(dir,{recursive:true,force:true});});
   const reservation=net.createServer();await new Promise(resolve=>reservation.listen(0,'127.0.0.1',resolve));
   const port=reservation.address().port;await new Promise(resolve=>reservation.close(resolve));
-  const args=[path.join(root,'deploy.sh'),'--mode','native','--port',String(port),'--dir',target];
+  const args=[script,'--mode','native','--port',String(port),'--dir',target];
   const first=await run('bash',args,{env});assert.ok(first.stdout.includes('ClipTalk is ready'));
+  const packages=fs.readFileSync(path.join(dir,'packages.log'),'utf8').trim().split('\n').map(line=>JSON.parse(line));
+  assert.ok(packages.every(args=>args[0]===platform.manager));
+  const install=packages.find(args=>args[1]==='install');
+  assert.ok(install.includes(platform.manager==='apt-get'?'xz-utils':'xz'));
+  assert.ok(install.includes(platform.manager==='apt-get'?'g++':'gcc-c++'));
   const firstRelease=fs.realpathSync(path.join(target,'current'));
   const configFile=path.join(target,'data','config.json');const secret=JSON.parse(fs.readFileSync(configFile)).sessionSecret;
   const Database=require('better-sqlite3');

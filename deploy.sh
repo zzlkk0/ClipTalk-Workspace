@@ -12,7 +12,7 @@ usage() {
   cat <<'HELP'
 Usage: bash deploy.sh [--mode native|docker] [--port 8000] [--dir PATH] [--ref main] [--dry-run]
 
-Default: native Node.js + systemd, without Docker, on Ubuntu/Debian.
+Default: native Node.js + systemd, without Docker, on Ubuntu/Debian or Alibaba Cloud Linux 3.
 Native mode installs a private Node.js 22 runtime if Node.js 22/24 is unavailable.
 Docker mode requires an existing Docker Engine and Compose plugin.
 Re-run the same command to update. Existing account data and passwords are kept.
@@ -51,13 +51,36 @@ if [[ -f "$install_dir/.deployment-mode" && $(cat "$install_dir/.deployment-mode
 fi
 service=cliptalk-workspace.service
 if [[ "$mode" == native ]]; then
-  [[ -f /etc/debian_version && -d /run/systemd/system ]] || { printf 'Native installation requires Ubuntu/Debian with systemd.\n' >&2; exit 1; }
+  [[ -f /etc/os-release && -d /run/systemd/system ]] || { printf 'Native installation requires Linux with systemd and /etc/os-release.\n' >&2; exit 1; }
+  # Alibaba Cloud Linux uses the RHEL package family, rather than apt.
+  . /etc/os-release
+  case " ${ID:-} ${ID_LIKE:-} " in
+    *' debian '*|*' ubuntu '*) package_family=debian; package_manager=apt-get;;
+    *' alinux '*|*' anolis '*|*' rhel '*|*' fedora '*|*' centos '*|*' rocky '*|*' almalinux '*)
+      package_family=rpm
+      if command -v dnf >/dev/null; then package_manager=dnf; else package_manager=yum; fi;;
+    *) printf 'Unsupported native system: %s. Supported: Ubuntu/Debian and modern RHEL-compatible systems, including Alibaba Cloud Linux 3.\n' "${PRETTY_NAME:-${ID:-unknown}}" >&2; exit 1;;
+  esac
+  command -v "$package_manager" >/dev/null || { printf 'Required package manager is unavailable: %s\n' "$package_manager" >&2; exit 1; }
+  glibc_version=$(getconf GNU_LIBC_VERSION 2>/dev/null || true)
+  glibc_version=${glibc_version##* }
+  if [[ ! "$glibc_version" =~ ^([0-9]+)\.([0-9]+)$ ]] || ((BASH_REMATCH[1]<2 || (BASH_REMATCH[1]==2 && BASH_REMATCH[2]<28))); then
+    printf 'Native Node.js 22 requires glibc 2.28 or newer. This system reports %s. Use Alibaba Cloud Linux 3 or a newer supported OS.\n' "${glibc_version:-unknown}" >&2; exit 1
+  fi
+  printf 'Detected %s; package manager: %s.\n' "${PRETTY_NAME:-${ID:-Linux}}" "$package_manager"
   printf 'Checking native dependencies (curl, xz, Python and C++ build tools)...\n'
   missing=0
-  for executable in curl xz python3 make g++; do command -v "$executable" >/dev/null || missing=1; done
+  for executable in curl xz python3 make g++ tar sha256sum; do command -v "$executable" >/dev/null || missing=1; done
+  if [[ $(id -u) == 0 ]]; then
+    for executable in useradd runuser nologin; do command -v "$executable" >/dev/null || missing=1; done
+  fi
   if ((missing)); then
-    "${privilege[@]}" apt-get update
-    "${privilege[@]}" apt-get install -y curl ca-certificates xz-utils python3 make g++
+    if [[ "$package_family" == debian ]]; then
+      "${privilege[@]}" "$package_manager" update
+      "${privilege[@]}" "$package_manager" install -y curl ca-certificates xz-utils python3 make g++ tar coreutils util-linux passwd
+    else
+      "${privilege[@]}" "$package_manager" install -y curl ca-certificates xz python3 make gcc-c++ tar coreutils util-linux shadow-utils
+    fi
   fi
 else
   command -v curl >/dev/null || { printf 'Install curl first.\n' >&2; exit 1; }
@@ -69,7 +92,7 @@ else
 fi
 if [[ "$mode" == native && $(id -u) == 0 ]]; then
   account=cliptalk
-  id "$account" >/dev/null 2>&1 || useradd --system --create-home --home-dir /var/lib/cliptalk --shell /usr/sbin/nologin "$account"
+  id "$account" >/dev/null 2>&1 || useradd --system --create-home --home-dir /var/lib/cliptalk --shell "$(command -v nologin)" "$account"
 else account=$(id -un); fi
 mkdir -p "$install_dir/releases" "$install_dir/backups"
 work_dir=$(mktemp -d)
@@ -179,7 +202,7 @@ ReadWritePaths=$install_dir/data
 [Install]
 WantedBy=multi-user.target
 UNIT
-  "${privilege[@]}" install -m 0644 "$work_dir/$service" "/etc/systemd/system/$service"
+  "${privilege[@]}" install -D -m 0644 "$work_dir/$service" "/etc/systemd/system/$service"
   "${privilege[@]}" systemctl daemon-reload
 fi
 ln -sfn "$release_dir" "$install_dir/current"

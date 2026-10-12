@@ -17,7 +17,7 @@ Docker is optional. You can run ClipTalk directly with Node.js, use the native i
 
 ## One-command native deployment — no Docker
 
-Supported installer targets: Ubuntu/Debian with systemd, on x86_64 or arm64. Run as a normal user with sudo privileges, or as root. The installer downloads source, installs missing build tools, uses Node.js 22/24 or installs a private Node.js 22 runtime, generates a configuration, and starts a systemd service.
+Supported installer targets: Ubuntu/Debian and Alibaba Cloud Linux 3 with systemd, on x86_64 or arm64. Modern RHEL-compatible systems with glibc 2.28 or newer also use the RPM installation path. Run as a normal user with sudo privileges, or as root. The installer detects the OS, installs missing build tools through apt-get or dnf/yum, uses Node.js 22/24 or installs a private Node.js 22 runtime, generates a configuration, and starts a systemd service. Older systems such as Alibaba Cloud Linux 2 or CentOS 7 are rejected before package installation because their glibc is too old for the official Node.js 22 binaries.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/zzlkk0/ClipTalk-Workspace/main/deploy.sh | bash
@@ -41,6 +41,8 @@ sudo systemctl restart cliptalk-workspace.service
 ```
 
 Initial username: **admin**. A random initial password is printed only when a new administrator account is created. Read it in the first-start logs, then change it in the admin panel. Existing passwords are preserved during upgrades.
+
+On Alibaba Cloud ECS, allow inbound TCP traffic to the chosen port (8000 by default) in the instance's security group. If an OS firewall is enabled, allow the same port there. After a successful install, open `http://YOUR_PUBLIC_IP:8000/`. The installer does not change your security group or firewall rules.
 
 Preview installer settings without changing the server:
 
@@ -130,6 +132,8 @@ On the first startup, the old shared conversations, files and clipboard are save
 ## Validation
 
 No production accounts or data are used by tests. Tests create their own temporary databases and HTTP services on random loopback ports.
+
+Installer tests simulate Ubuntu/Debian and Alibaba Cloud Linux 3 with both dnf and yum. They mock host package and service commands while starting real temporary Node.js servers to verify installation, persistent updates, and rollback.
 
 ```bash
 npm ci
