@@ -44,7 +44,7 @@ curl -fsSL https://raw.githubusercontent.com/zzlkk0/ClipTalk-Workspace/main/depl
 
 New installations default to HTTP port **8000**. Updates automatically keep the existing port; supply `--port` only when you want to change it. The application listens on the server's interfaces; allow the chosen port in your server/network configuration, or put it behind a reverse proxy. Use HTTPS for encrypted transport.
 
-The native service is `cliptalk-workspace.service`. The default directory is `$HOME/cliptalk-workspace` for a normal user and `/opt/cliptalk-workspace` for root. Root installation uses a dedicated unprivileged `cliptalk` service account.
+The native service is `cliptalk-workspace.service`. A new installation defaults to `$HOME/cliptalk-workspace` for a normal user and `/opt/cliptalk-workspace` for root. Subsequent native updates discover the registered service's directory and preserve its service account, including when an installation created by a normal user is later updated as root. A new root installation uses a dedicated unprivileged `cliptalk` service account. An explicit `--dir` selects another directory; an existing native account database there retains its owner as the service account. A managed installation with a missing or empty account database blocks updates instead of silently creating new accounts.
 
 ```bash
 sudo systemctl status cliptalk-workspace.service
@@ -117,7 +117,7 @@ CLIPTALK_DATA_DIR=/srv/cliptalk-data node server.js
 
 ## Updating and backups
 
-Re-run the installer with the same `--mode` and `--dir`. The existing port is preserved automatically. To switch to port 13131 once, run:
+Re-run the installer with the same `--mode`. Native updates discover the existing directory automatically; supply `--dir` only to select a different directory. The existing port is preserved automatically. To switch to port 13131 once, run:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/zzlkk0/ClipTalk-Workspace/main/deploy.sh \
@@ -126,7 +126,7 @@ curl -fsSL https://raw.githubusercontent.com/zzlkk0/ClipTalk-Workspace/main/depl
 
 Later updates can omit `--port`. Native installations retain the port in `data/config.json`, including manual changes. Docker installations retain their saved host port. You can pin a branch, tag or commit with `--ref` (without slashes).
 
-The installer builds the new release before stopping the existing application. It backs up the stopped data, activates the new release, checks `/api/health`, and restores the previous release and completed data backup if startup fails. Installer backups are stored in the installation directory's `backups/` folder. Keep these private.
+The installer builds the new release before stopping the existing application. It backs up the stopped data, activates the new release, checks `/api/health`, and restores the previous release, native service unit and completed data backup if startup fails. Installer backups are stored in the installation directory's `backups/` folder. Keep these private. Updates reuse the existing account database and show only the current startup's logs; the initial administrator prompt is shown for a new database.
 
 For manual deployments, stop the application before copying the entire data directory. It includes:
 
@@ -139,6 +139,19 @@ data/
 ```
 
 SQLite WAL/SHM files may also exist. Copy the complete directory while stopped. A restart currently signs users out because sessions are held in memory; persisted content remains on disk.
+
+### Moving an existing native installation's data
+
+If an earlier installer run started a new empty installation in another directory, your original accounts and files may still be in the original directory. To keep the currently registered native installation and restore an older installation's complete data, run this helper as root:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/zzlkk0/ClipTalk-Workspace/main/scripts/migrate-native-data.py \
+  | python3 - --from /path/to/old-installation --to /opt/cliptalk-workspace --port 13131
+```
+
+The destination must already be installed and its `cliptalk-workspace.service` must point there. The helper checks the source accounts, stops the destination, refuses to copy data still open by another process, backs up both complete data directories, copies the source with the destination service account's ownership, and checks startup. The original source stays in place. Failed migrations restore the destination's previous data. Backups are saved in the destination's private `backups/` directory.
+
+This replaces the destination's complete data with the source snapshot; it does not merge two sets of accounts. The replaced destination is kept in the backup. Original account IDs, usernames, password hashes, archives, quotas, uploads and settings are retained. Sign in with the original passwords afterwards. `--port` is optional and defaults to the destination's existing port. Later installer updates reuse the registered destination directory and port.
 
 ## Migrating the previous shared workspace
 
@@ -159,6 +172,7 @@ On the first startup, the old shared conversations, files and clipboard are save
 No production accounts or data are used by tests. Tests create their own temporary databases and HTTP services on random loopback ports.
 
 Installer tests simulate Ubuntu/Debian and Alibaba Cloud Linux 3 with both dnf and yum. They mock host package and service commands while starting real temporary Node.js servers to verify installation, persistent updates, and rollback.
+Native migration tests verify account and file preservation, backups, rollback, and refusal to copy active or invalid data. The helper requires Python 3.6 or newer, using only the standard library.
 
 ```bash
 npm ci

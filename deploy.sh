@@ -5,6 +5,7 @@ umask 077
 mode=native
 port=8000
 port_explicit=0
+dir_explicit=0
 repo=zzlkk0/ClipTalk-Workspace
 ref=main
 dry_run=0
@@ -15,6 +16,7 @@ Usage: bash deploy.sh [--mode native|docker] [--port 8000] [--dir PATH] [--ref m
 
 Default: native Node.js + systemd, without Docker, on Ubuntu/Debian or Alibaba Cloud Linux 3.
 New installations use port 8000. Updates keep the existing port unless --port is supplied.
+Native updates reuse the installed systemd service's directory and service account.
 Native mode installs a private Node.js 22 runtime if Node.js 22/24 is unavailable.
 Docker mode requires an existing Docker Engine and Compose plugin.
 Re-run the same command to update. Existing account data and passwords are kept.
@@ -25,7 +27,7 @@ while (($#)); do
   case "$1" in
     --mode|--port|--dir|--ref)
       if (($#<2)); then printf 'Missing value for %s\n' "$1" >&2; exit 2; fi
-      case "$1" in --mode) mode=$2;; --port) port=$2; port_explicit=1;; --dir) install_dir=$2;; --ref) ref=$2;; esac
+      case "$1" in --mode) mode=$2;; --port) port=$2; port_explicit=1;; --dir) install_dir=$2; dir_explicit=1;; --ref) ref=$2;; esac
       shift 2;;
     --dry-run) dry_run=1; shift;;
     --help|-h) usage; exit 0;;
@@ -34,7 +36,37 @@ while (($#)); do
 done
 [[ "$mode" == native || "$mode" == docker ]] || { printf 'Mode must be native or docker.\n' >&2; exit 2; }
 [[ "$ref" =~ ^[a-zA-Z0-9._-]+$ ]] || { printf 'Use a branch, tag or commit without slashes.\n' >&2; exit 2; }
+service=cliptalk-workspace.service
+unit_path="/etc/systemd/system/$service"
+installed_dir=''
+installed_user=''
+if [[ "$mode" == native && -f "$unit_path" ]]; then
+  installed_cwd=''
+  installed_data=''
+  while IFS= read -r line; do
+    case "$line" in
+      WorkingDirectory=*) installed_cwd=${line#WorkingDirectory=};;
+      Environment=CLIPTALK_DATA_DIR=*) installed_data=${line#Environment=CLIPTALK_DATA_DIR=};;
+      User=*) installed_user=${line#User=};;
+    esac
+  done < "$unit_path"
+  if [[ "$installed_cwd" == /*/current && "$installed_data" == "${installed_cwd%/current}/data" ]]; then
+    installed_dir=${installed_cwd%/current}
+    if ((!dir_explicit)); then install_dir=$installed_dir; fi
+  elif ((!dir_explicit)); then
+    printf 'The existing native service uses custom paths. Supply --dir for its intended installation; no files were changed.\n' >&2; exit 1
+  fi
+fi
 [[ "$install_dir" == /* && "$install_dir" != / && "$install_dir" != *[$'\n\r\t %"\\']* ]] || { printf 'Choose an absolute installation path without whitespace or special characters.\n' >&2; exit 2; }
+accounts_preexisting=0
+if [[ -s "$install_dir/data/database/users.db" ]]; then accounts_preexisting=1; fi
+if [[ "$mode" == docker && -f "$install_dir/.deployment-mode" ]]; then
+  # A Docker bind mount may belong to the container UID, rather than this user.
+  accounts_preexisting=1
+fi
+if [[ "$mode" == native && -f "$install_dir/.deployment-mode" ]] && ((!accounts_preexisting)); then
+  printf 'The existing account database is missing or empty: %s/data/database/users.db. Update stopped without creating new accounts; restore the existing data first.\n' "$install_dir" >&2; exit 1
+fi
 if ((!port_explicit)); then
   saved_port=''
   # Native config is authoritative, including ports changed by hand. Docker's
@@ -76,7 +108,7 @@ fi
 if [[ -f "$install_dir/.deployment-mode" && $(cat "$install_dir/.deployment-mode") != "$mode" ]]; then
   printf 'This installation uses another mode. Choose a different --dir to deploy another instance.\n' >&2; exit 1
 fi
-service=cliptalk-workspace.service
+printf 'Using installation directory: %s\n' "$install_dir"
 if [[ "$mode" == native ]]; then
   [[ -f /etc/os-release && -d /run/systemd/system ]] || { printf 'Native installation requires Linux with systemd and /etc/os-release.\n' >&2; exit 1; }
   # Alibaba Cloud Linux uses the RHEL package family, rather than apt.
@@ -119,10 +151,28 @@ else
 fi
 if [[ "$mode" == native && $(id -u) == 0 ]]; then
   account=cliptalk
+  previous_account=''
+  if [[ "$install_dir" == "$installed_dir" && -n "$installed_user" ]]; then
+    previous_account=$installed_user
+  elif ((accounts_preexisting)); then
+    # An explicit --dir can recover another existing installation. Its database
+    # owner must retain access through private parent directories under /home.
+    previous_account=$(stat -c %U "$install_dir/data/database/users.db")
+  fi
+  if [[ -n "$previous_account" ]]; then
+    id "$previous_account" >/dev/null 2>&1 || { printf 'The existing service account is unavailable: %s. No application files were changed.\n' "$previous_account" >&2; exit 1; }
+    if [[ $(id -u "$previous_account") != 0 ]]; then account=$previous_account; fi
+  fi
   id "$account" >/dev/null 2>&1 || useradd --system --create-home --home-dir /var/lib/cliptalk --shell "$(command -v nologin)" "$account"
 else account=$(id -un); fi
+if [[ "$mode" == native ]]; then printf 'Native service account: %s\n' "$account"; fi
 mkdir -p "$install_dir/releases" "$install_dir/backups"
 work_dir=$(mktemp -d)
+previous_unit=0
+if [[ "$mode" == native && -f "$unit_path" ]]; then
+  cp "$unit_path" "$work_dir/previous-unit"
+  previous_unit=1
+fi
 release_dir="$install_dir/releases/$(date -u +%Y%m%dT%H%M%SZ)-$$"
 mkdir -p "$release_dir"
 old_release=''
@@ -140,9 +190,9 @@ startup_diagnostics() {
   {
     if [[ "$mode" == native ]]; then
       "${privilege[@]}" systemctl status "$service" --no-pager -l || true
-      "${privilege[@]}" journalctl -u "$service" -n 80 --no-pager || true
+      "${privilege[@]}" journalctl -u "$service" --since "$startup_since_native" -n 80 --no-pager || true
     else
-      compose "$release_dir" logs --no-color --tail 80 app || true
+      compose "$release_dir" logs --since "$startup_since_docker" --no-color --tail 80 app || true
     fi
   } 2>&1 | sed -E 's/(密码:[[:space:]]*).*/\1[redacted]/; s/([Pp]assword:[[:space:]]*).*/\1[redacted]/' >&2 || true
 }
@@ -158,7 +208,15 @@ rollback() {
     fi
     if [[ -n "$old_release" ]]; then
       ln -sfn "$old_release" "$install_dir/current"
-      if [[ "$mode" == native ]]; then "${privilege[@]}" systemctl restart "$service" || true; else compose "$old_release" up -d --no-build || true; fi
+    fi
+    if [[ "$mode" == native ]]; then
+      if ((previous_unit)); then
+        "${privilege[@]}" install -D -m 0644 "$work_dir/previous-unit" "$unit_path" || true
+        "${privilege[@]}" systemctl daemon-reload || true
+      fi
+      if [[ -n "$old_release" ]] || ((previous_unit)); then "${privilege[@]}" systemctl restart "$service" || true; fi
+    elif [[ -n "$old_release" ]]; then
+      compose "$old_release" up -d --no-build || true
     fi
   fi
   rm -rf "$work_dir"
@@ -241,11 +299,16 @@ ReadWritePaths=$install_dir/data
 [Install]
 WantedBy=multi-user.target
 UNIT
-  "${privilege[@]}" install -D -m 0644 "$work_dir/$service" "/etc/systemd/system/$service"
+  # Replacing the global service changes the running installation even when
+  # this explicitly selected directory has no previous release of its own.
+  activated=1
+  "${privilege[@]}" install -D -m 0644 "$work_dir/$service" "$unit_path"
   "${privilege[@]}" systemctl daemon-reload
 fi
 ln -sfn "$release_dir" "$install_dir/current"
 activated=1
+startup_since_native=$(date '+%Y-%m-%d %H:%M:%S')
+startup_since_docker=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
 if [[ "$mode" == native ]]; then
   "${privilege[@]}" systemctl enable "$service"
   "${privilege[@]}" systemctl restart "$service"
@@ -266,10 +329,14 @@ printf '%s\n' "$mode" > "$install_dir/.deployment-mode"
 printf '%s\n' "$port" > "$install_dir/.port"
 activated=0
 printf '\nClipTalk is ready on port %s. Open http://YOUR_SERVER:%s/\n' "$port" "$port"
-printf 'Initial username: admin. The randomly generated password is in the first-start logs.\n'
+if ((accounts_preexisting)); then
+  printf 'Existing account database reused. Stored accounts and passwords are kept.\n'
+else
+  printf 'New account database initialized. Initial username: admin; its random password is in this startup log.\n'
+fi
 if [[ "$mode" == native ]]; then
   printf 'Service: %s\n' "$service"
-  "${privilege[@]}" journalctl -u "$service" -n 18 --no-pager
-else compose "$release_dir" logs --tail 18 app; fi
+  "${privilege[@]}" journalctl -u "$service" --since "$startup_since_native" -n 18 --no-pager
+else compose "$release_dir" logs --since "$startup_since_docker" --tail 18 app; fi
 printf 'Data directory: %s/data\n' "$install_dir"
 if [[ -n "$backup_dir" ]]; then printf 'Previous data backup: %s\n' "$backup_dir"; fi

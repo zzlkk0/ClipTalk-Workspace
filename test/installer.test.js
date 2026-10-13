@@ -5,6 +5,7 @@ const fs=require('node:fs');
 const os=require('node:os');
 const path=require('node:path');
 const net=require('node:net');
+const crypto=require('node:crypto');
 const {execFile,execFileSync}=require('node:child_process');
 const {promisify}=require('node:util');
 const run=promisify(execFile);
@@ -20,9 +21,11 @@ async function unusedPort(){
 function isolatedInstaller(dir,release){
   fs.writeFileSync(path.join(dir,'os-release'),release);
   fs.mkdirSync(path.join(dir,'systemd'));
+  fs.mkdirSync(path.join(dir,'units'));
   const script=path.join(dir,'deploy.sh');
   fs.writeFileSync(script,fs.readFileSync(path.join(root,'deploy.sh'),'utf8')
     .replaceAll('/etc/os-release',path.join(dir,'os-release'))
+    .replaceAll('/etc/systemd/system',path.join(dir,'units'))
     .replaceAll('/run/systemd/system',path.join(dir,'systemd')));
   return script;
 }
@@ -36,6 +39,39 @@ test('installer options validate without touching packages or services',async()=
   for(const options of [['--mode','bad'],['--port','0'],['--port','65536'],['--port','-1'],['--dir','/'],['--dir','/tmp/a b'],['--ref','../bad'],['--port']]) {
     await assert.rejects(run('bash',[path.join(root,'deploy.sh'),'--dry-run',...options]));
   }
+});
+
+test('native updates discover the existing service directory instead of creating another default installation',async t=>{
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'cliptalk-discovery-'));
+  t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
+  const script=isolatedInstaller(dir,'ID=debian\n');
+  const original=path.join(dir,'original'),data=path.join(original,'data');
+  fs.mkdirSync(path.join(data,'database'),{recursive:true});
+  fs.writeFileSync(path.join(data,'database','users.db'),'existing account database');
+  fs.writeFileSync(path.join(data,'config.json'),JSON.stringify({port:13131}));
+  fs.writeFileSync(path.join(original,'.deployment-mode'),'native\n');
+  const unit=path.join(dir,'units','cliptalk-workspace.service');
+  const contents='[Service]\nUser='+os.userInfo().username+'\nWorkingDirectory='+original+'/current\nEnvironment=CLIPTALK_DATA_DIR='+data+'\n';
+  fs.writeFileSync(unit,contents);
+  const detected=await run('bash',[script,'--dry-run']);
+  assert.ok(detected.stdout.includes('directory='+original));
+  assert.ok(detected.stdout.includes('port=13131'));
+  const explicit=await run('bash',[script,'--dry-run','--dir',path.join(dir,'another')]);
+  assert.ok(explicit.stdout.includes('directory='+path.join(dir,'another')));
+  assert.equal(fs.readFileSync(unit,'utf8'),contents);
+  assert.equal(fs.existsSync(path.join(dir,'another')),false);
+});
+
+test('a managed installation with a missing account database aborts before packages or service changes',async t=>{
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'cliptalk-missing-accounts-'));
+  t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
+  const script=isolatedInstaller(dir,'ID=alinux\n');
+  const target=path.join(dir,'app');fs.mkdirSync(target);
+  fs.writeFileSync(path.join(target,'.deployment-mode'),'native\n');
+  await assert.rejects(run('bash',[script,'--dir',target,'--port','13131']),
+    error=>error.code===1&&error.stderr.includes('Update stopped without creating new accounts'));
+  assert.equal(fs.existsSync(path.join(target,'releases')),false);
+  assert.equal(fs.existsSync(path.join(target,'data')),false);
 });
 
 test('installer keeps existing native and Docker host ports unless explicitly overridden',async t=>{
@@ -108,9 +144,12 @@ with open(os.environ['CLIPTALK_INSTALL_TEST_ROOT']+'/packages.log','a') as log:
   executable(path.join(bin,'sudo'),'#!/bin/sh\nexec "$@"\n');
   executable(path.join(bin,'seq'),'#!/bin/sh\nprintf "1\\n2\\n3\\n"\n');
   executable(path.join(bin,'journalctl'),`#!/usr/bin/env python3
-import os,pathlib
+import os,pathlib,sys
 log=pathlib.Path(os.environ['CLIPTALK_INSTALL_TEST_ROOT'])/'service.log'
-if log.exists():print(log.read_text(),end='')
+offset=pathlib.Path(os.environ['CLIPTALK_INSTALL_TEST_ROOT'])/'log-offset'
+if log.exists():
+ start=int(offset.read_text()) if '--since' in sys.argv and offset.exists() else 0
+ print(log.read_bytes()[start:].decode(),end='')
 `);
   executable(path.join(bin,'curl'),`#!/usr/bin/env python3
 import os,sys,shutil,subprocess
@@ -123,8 +162,9 @@ sys.exit(subprocess.call([${JSON.stringify(realCurl)}]+args))
 `);
   executable(path.join(bin,'install'),`#!/usr/bin/env python3
 import os,sys,shutil
-if sys.argv[-1]!='/etc/systemd/system/cliptalk-workspace.service':raise RuntimeError('Unexpected host mutation')
-shutil.copyfile(sys.argv[-2],os.environ['CLIPTALK_INSTALL_TEST_ROOT']+'/unit')
+expected=os.environ['CLIPTALK_INSTALL_TEST_ROOT']+'/units/cliptalk-workspace.service'
+if sys.argv[-1]!=expected:raise RuntimeError('Unexpected host mutation')
+shutil.copyfile(sys.argv[-2],expected)
 `);
   executable(path.join(bin,'systemctl'),`#!/usr/bin/env python3
 import os,sys,subprocess,signal,time,pathlib
@@ -142,13 +182,20 @@ def stop():
   pidfile.unlink(missing_ok=True)
 if command=='stop':stop()
 elif command=='restart':
- stop();unit=(root/'unit').read_text().splitlines();cwd=next(l[17:] for l in unit if l.startswith('WorkingDirectory='))
+ stop();unit=(root/'units/cliptalk-workspace.service').read_text().splitlines();cwd=next(l[17:] for l in unit if l.startswith('WorkingDirectory='))
  data=next(l[len('Environment=CLIPTALK_DATA_DIR='):] for l in unit if l.startswith('Environment=CLIPTALK_DATA_DIR='))
- logfile=open(root/'service.log','ab');env=os.environ.copy();env['CLIPTALK_DATA_DIR']=data;env['CLIPTALK_HOST']='127.0.0.1'
+ logpath=root/'service.log';(root/'log-offset').write_text(str(logpath.stat().st_size if logpath.exists() else 0))
+ logfile=open(logpath,'ab');env=os.environ.copy();env['CLIPTALK_DATA_DIR']=data;env['CLIPTALK_HOST']='127.0.0.1'
+ if env.get('CLIPTALK_INSTALL_TEST_FAIL_HEALTH')=='1':
+  logfile.write(b'Password: INSTALLER_DIAGNOSTIC_PASSWORD_SHOULD_BE_REDACTED\\n')
+  logfile.write('密码:   INSTALLER_DIAGNOSTIC_PASSWORD_SHOULD_BE_REDACTED\\n'.encode());logfile.flush()
  child=subprocess.Popen([${JSON.stringify(realNode)},cwd+'/server.js'],cwd=cwd,env=env,stdout=logfile,stderr=logfile,start_new_session=True)
  pidfile.write_text(str(child.pid))
 elif command=='status':
  print('Mock service status: active (running)');sys.exit(3)
+elif command=='daemon-reload' and os.environ.get('CLIPTALK_INSTALL_TEST_FAIL_RELOAD_ONCE')=='1':
+ marker=root/'failed-reload-once'
+ if not marker.exists():marker.write_text('failed');sys.exit(1)
 elif command not in ['daemon-reload','enable']:raise RuntimeError('Unexpected service action')
 `);
   const env={...process.env,PATH:bin+path.delimiter+process.env.PATH,
@@ -160,6 +207,8 @@ elif command not in ['daemon-reload','enable']:raise RuntimeError('Unexpected se
   const updateArgs=[script,'--mode','native','--dir',target];
   const args=[...updateArgs,'--port',String(port)];
   const first=await run('bash',args,{env});assert.ok(first.stdout.includes('ClipTalk is ready'));
+  assert.ok(first.stdout.includes('New account database initialized'));
+  const initialPassword=first.stdout.match(/密码:\s*(\S+)/)?.[1];assert.ok(initialPassword);
   const packages=fs.readFileSync(path.join(dir,'packages.log'),'utf8').trim().split('\n').map(line=>JSON.parse(line));
   assert.ok(packages.every(args=>args[0]===platform.manager));
   const install=packages.find(args=>args[1]==='install');
@@ -170,6 +219,21 @@ elif command not in ['daemon-reload','enable']:raise RuntimeError('Unexpected se
   assert.equal(JSON.parse(fs.readFileSync(configFile)).port,port);
   assert.equal(fs.readFileSync(path.join(target,'.port'),'utf8').trim(),String(port));
   const Database=require('better-sqlite3');
+  const usersFile=path.join(target,'data','database','users.db');
+  const users=new Database(usersFile);
+  const adminHash=users.prepare("SELECT password_hash FROM users WHERE role='admin'").get().password_hash;
+  users.prepare("UPDATE users SET username='existing-admin' WHERE role='admin'").run();
+  for(const status of ['active','pending','disabled']) {
+    users.prepare('INSERT INTO users (id,username,password_hash,role,status,language,created_at) VALUES (?,?,?,?,?,?,?)')
+      .run('u-retained-'+status,'member-'+status,adminHash,'user',status,'en',123456);
+  }
+  users.close();
+  const accountsFingerprint=()=>{
+    const current=new Database(usersFile,{readonly:true,fileMustExist:true});
+    const rows=current.prepare('SELECT id,username,password_hash,role,status,language,created_at FROM users ORDER BY id').all();current.close();
+    return crypto.createHash('sha256').update(JSON.stringify(rows)).digest('hex');
+  };
+  const expectedAccounts=accountsFingerprint();
   const database=new Database(path.join(target,'data','database','workspace.db'));
   database.prepare('INSERT INTO workspaces (owner_id,clipboard_text) VALUES (?,?)').run('test-owner','preserve me');database.close();
   // Reproduce curl (52): the configured proxy accepts and closes HTTP requests.
@@ -186,6 +250,10 @@ elif command not in ['daemon-reload','enable']:raise RuntimeError('Unexpected se
   assert.ok(proxyRequestsBeforeUpdate>0);
   fs.writeFileSync(path.join(target,'.port'),'8000\n');
   const second=await run('bash',updateArgs,{env:proxyEnv});assert.ok(second.stdout.includes('Previous data backup'));
+  assert.ok(second.stdout.includes('Existing account database reused'));
+  assert.ok(!second.stdout.includes('Initial username: admin'));
+  assert.ok(!second.stdout.includes('初始管理员账号已创建'));
+  assert.equal(accountsFingerprint(),expectedAccounts,'Account IDs, names, password hashes, roles and status must persist');
   assert.equal(proxyRequests,proxyRequestsBeforeUpdate,'Loopback health checks must bypass the configured proxy');
   const secondRelease=fs.realpathSync(path.join(target,'current'));assert.notEqual(secondRelease,firstRelease);
   assert.equal(JSON.parse(fs.readFileSync(configFile)).sessionSecret,secret);
@@ -197,10 +265,10 @@ elif command not in ['daemon-reload','enable']:raise RuntimeError('Unexpected se
   assert.equal(JSON.parse(fs.readFileSync(configFile)).port,changedPort);
   assert.equal(fs.readFileSync(path.join(target,'.port'),'utf8').trim(),String(changedPort));
   const changedRelease=fs.realpathSync(path.join(target,'current'));assert.notEqual(changedRelease,secondRelease);
+  assert.equal(accountsFingerprint(),expectedAccounts);
+  const unitFile=path.join(dir,'units','cliptalk-workspace.service');
+  const previousUnit=fs.readFileSync(unitFile,'utf8');
   const diagnosticPassword='INSTALLER_DIAGNOSTIC_PASSWORD_SHOULD_BE_REDACTED';
-  fs.appendFileSync(path.join(dir,'service.log'),'Password: '+diagnosticPassword+'\n');
-  const initialPassword=fs.readFileSync(path.join(dir,'service.log'),'utf8').match(/密码:\s*(\S+)/)?.[1];
-  assert.ok(initialPassword);
   await assert.rejects(run('bash',args,{env:{...proxyEnv,CLIPTALK_INSTALL_TEST_FAIL_HEALTH:'1'}}),error=>{
     assert.equal(error.code,1);
     assert.ok(error.stderr.includes('curl: (22) Forced health check failure'));
@@ -216,11 +284,40 @@ elif command not in ['daemon-reload','enable']:raise RuntimeError('Unexpected se
   assert.equal(JSON.parse(fs.readFileSync(configFile)).sessionSecret,secret);
   assert.equal(JSON.parse(fs.readFileSync(configFile)).port,changedPort,'Failed port changes restore the previous configuration');
   assert.equal(fs.readFileSync(path.join(target,'.port'),'utf8').trim(),String(changedPort));
+  assert.equal(fs.readFileSync(unitFile,'utf8'),previousUnit);
+  assert.equal(accountsFingerprint(),expectedAccounts,'Account records must also survive rollback');
   const restored=new Database(path.join(target,'data','database','workspace.db'));
   assert.equal(restored.prepare('SELECT clipboard_text FROM workspaces WHERE owner_id=?').get('test-owner').clipboard_text,'preserve me');restored.close();
   let response;
   for(let attempt=0;attempt<40;attempt++){
     try{response=await fetch('http://127.0.0.1:'+changedPort+'/api/health');if(response.ok)break;}catch{}
+    await new Promise(resolve=>setTimeout(resolve,50));
+  }
+  assert.equal(response?.status,200);
+  // A failed explicit directory switch must restore the previously running unit,
+  // even though the new directory has no previous release to roll back to.
+  const switchedTarget=path.join(dir,'another-install');
+  await assert.rejects(run('bash',[script,'--dir',switchedTarget,'--port',String(port)],
+    {env:{...proxyEnv,CLIPTALK_INSTALL_TEST_FAIL_HEALTH:'1'}}),error=>error.code===1);
+  assert.equal(fs.readFileSync(unitFile,'utf8'),previousUnit);
+  assert.equal(accountsFingerprint(),expectedAccounts);
+  for(let attempt=0;attempt<40;attempt++){
+    try{response=await fetch('http://127.0.0.1:'+changedPort+'/api/health');if(response.ok)break;}catch{response=null;}
+    await new Promise(resolve=>setTimeout(resolve,50));
+  }
+  assert.equal(response?.status,200);
+  const login=await fetch('http://127.0.0.1:'+changedPort+'/api/login',{
+    method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:'existing-admin',password:initialPassword})
+  });
+  assert.equal(login.status,200,'The existing password must continue to authenticate the renamed administrator');
+  // Fail after writing the new global unit but before activation; the original
+  // installation must still be restored, including on an empty new directory.
+  await assert.rejects(run('bash',[script,'--dir',path.join(dir,'reload-failure'),'--port',String(port)],
+    {env:{...env,CLIPTALK_INSTALL_TEST_FAIL_RELOAD_ONCE:'1'}}),error=>error.code===1);
+  assert.equal(fs.readFileSync(unitFile,'utf8'),previousUnit);
+  assert.equal(accountsFingerprint(),expectedAccounts);
+  for(let attempt=0;attempt<40;attempt++){
+    try{response=await fetch('http://127.0.0.1:'+changedPort+'/api/health');if(response.ok)break;}catch{response=null;}
     await new Promise(resolve=>setTimeout(resolve,50));
   }
   assert.equal(response?.status,200);
