@@ -14,7 +14,7 @@ async function login(browser,f,username,viewport={width:1440,height:900}){
 }
 async function theme(page,value){await page.waitForFunction(value=>document.documentElement.dataset.theme===value,value);}
 
-test('browser: white theme follows the account, admin creation and rename work, and storage refresh preserves unsaved quotas',async t=>{
+test('browser: account themes, administrator creation and revocation, protected admin name, and storage refresh',async t=>{
   const f=await startFixture(t,{legacy:false,builtinAdmin:true});
   const browser=await chromium.launch({executablePath:process.env.CLIPTALK_CHROME||undefined,headless:true,args:['--no-sandbox','--disable-dev-shm-usage']});
   t.after(()=>browser.close());
@@ -41,6 +41,10 @@ test('browser: white theme follows the account, admin creation and rename work, 
   await root.page.locator('#create-admin-form button').click();await waitText(root.page,'#admin-create-msg','管理员已创建');
   await waitText(root.page,'#user-table','manager_one');
   await root.page.locator('[data-promote-user="bob"]').click();await bob.page.locator('#admin-btn').waitFor({state:'visible'});
+  await root.page.locator('[data-demote-user="bob"]').click();await bob.page.locator('#admin-btn').waitFor({state:'hidden'});
+  await root.page.locator('[data-promote-user="bob"]').waitFor({state:'visible'});
+  assert.equal(await bob.page.evaluate(async()=> (await fetch('/api/admin/users')).status),403);
+  assert.equal(await bob.page.evaluate(async()=> (await fetch('/api/me')).status),200);
   const manager=await login(browser,f,'manager_one');manager.page.on('pageerror',error=>errors.push(error.message));
   await manager.page.locator('#admin-btn').click();await manager.page.locator('#my-account-link').click();
   await manager.page.locator('#account-username').fill('manager_renamed');await manager.page.locator('#account-password').fill(f.password);
@@ -49,6 +53,10 @@ test('browser: white theme follows the account, admin creation and rename work, 
   await manager.page.locator('#delete-account-form button').click();await manager.page.waitForURL(f.base+'/login.html');
   await root.page.locator('#my-account-link').click();await waitText(root.page,'#last-admin-hint','默认管理员账号不能删除');
   assert.equal(await root.page.locator('#delete-account-form button').isDisabled(),true);
+  await waitText(root.page,'#username-hint','默认管理员的用户名固定');
+  assert.equal(await root.page.locator('#account-username').isEditable(),false);
+  assert.equal(await root.page.locator('#account-new-password').isEditable(),true);
+  assert.equal(await root.page.locator('#account-username').inputValue(),'admin');
   const screenshots=path.join(__dirname,'..','validation','screenshots');fs.mkdirSync(screenshots,{recursive:true});
   await root.page.goto(f.base+'/admin3.html');await waitText(root.page,'#storage-table','alice');await theme(root.page,'light');
   await root.page.screenshot({path:path.join(screenshots,'white-admin-storage.png'),fullPage:true});

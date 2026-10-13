@@ -6,6 +6,10 @@ const fs = require('fs');
 
 let db;
 
+function fail(code, status = 409) {
+  throw Object.assign(new Error(code), { status });
+}
+
 function init(dataDir = __dirname) {
   fs.mkdirSync(path.join(dataDir, 'database'), { recursive: true });
   db = new Database(path.join(dataDir, 'database', 'users.db'));
@@ -117,6 +121,19 @@ function promoteUser(id) {
   return db.prepare("UPDATE users SET role = 'admin' WHERE id = ? AND status = 'active'").run(id);
 }
 
+function demoteAdministrator(id, actor) {
+  return db.transaction(() => {
+    const user = getUserById(id);
+    if (!user) fail('not_found', 404);
+    if (user.builtin_admin) fail('protected_admin_role');
+    if (id === actor) fail('cannot_demote_self');
+    if (user.role !== 'admin') fail('not_admin', 400);
+    if (user.status === 'active' && otherActiveAdmins(id) === 0) fail('last_admin');
+    db.prepare("UPDATE users SET role = 'user' WHERE id = ?").run(id);
+    return getUserById(id);
+  })();
+}
+
 function createAdministrator(username, password) {
   return db.transaction(() => {
     const user = createUser(username, password);
@@ -153,6 +170,9 @@ function changePassword(id, newPassword) {
 
 function updateAccount(id, username, password) {
   return db.transaction(() => {
+    const user = getUserById(id);
+    if (!user) fail('not_found', 404);
+    if (user.builtin_admin && username !== user.username) fail('protected_admin_name');
     db.prepare('UPDATE users SET username = ? WHERE id = ?').run(username, id);
     if (password) changePassword(id, password);
   })();
@@ -190,6 +210,7 @@ module.exports = {
   listUsers,
   otherActiveAdmins,
   promoteUser,
+  demoteAdministrator,
   createAdministrator,
   getPendingUsers,
   approveUser,

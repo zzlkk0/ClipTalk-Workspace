@@ -3,6 +3,7 @@
 <main class="account-main"><h1 data-t="account.title">我的账号</h1><p class="muted" data-t="account.hint">修改用户名或密码后，其他设备需要重新登录，已有内容保留。</p><p id="page-notice" class="notice" role="status" hidden></p>
 <section class="card"><h2 data-t="account.edit">修改账号</h2><form id="account-form">
 <label for="account-username" data-t="login.username">用户名</label><input id="account-username" required minlength="3" maxlength="20" pattern="[a-zA-Z0-9_-]{3,20}" autocomplete="username">
+<p id="username-hint" class="hint" hidden></p>
 <label for="account-password" data-t="account.current_password">当前密码</label><input id="account-password" type="password" required autocomplete="current-password">
 <label for="account-new-password" data-t="account.new_password">新密码（留空则不修改）</label><input id="account-new-password" type="password" minlength="6" maxlength="72" autocomplete="new-password">
 <label for="account-confirm-password" data-t="register.confirm_password">确认新密码</label><input id="account-confirm-password" type="password" autocomplete="new-password">

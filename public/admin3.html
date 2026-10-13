@@ -207,8 +207,8 @@ async function load(){
           }
         }else{
           if(u.id===myId)h+='<a class="btn" href="/account.html">修改本账号</a>';
-          if(u.builtin_admin)h+='<span style="color:var(--dim);font-size:11px">默认管理员 · 不可删除</span>';
-          else if(u.id!==myId)h+='<span style="color:var(--dim);font-size:11px">由本人管理账号</span>';
+          if(u.builtin_admin)h+='<span style="color:var(--dim);font-size:11px">默认管理员 · 不可改名、删除或取消权限</span>';
+          else if(u.id!==myId)h+='<button class="btn btn-warn" data-demote-user="'+u.id+'" onclick="demoteUser(\''+u.id+'\')">取消管理员权限</button>';
         }
         h+='</td></tr>';
       });
@@ -217,7 +217,7 @@ async function load(){
     h+='</div>';
 
     h+='<div class="card"><div class="card-header">添加管理员</div>';
-    h+='<p class="storage-hint">创建一个独立管理员账号，或在上方把有效用户设为管理员。默认管理员不可删除；新增管理员可以修改名称和删除本账号，系统会保留至少一个有效管理员。</p>';
+    h+='<p class="storage-hint">创建管理员账号，或在上方把有效用户设为管理员，也可取消其他管理员的权限并保留其账号和数据。默认管理员不能改名、删除或取消权限；新增管理员可以修改名称，系统会保留至少一个有效管理员。</p>';
     h+='<form id="create-admin-form" class="admin-create" onsubmit="createAdmin(event)"><div class="field"><label for="new-admin-username">新管理员用户名</label><input id="new-admin-username" required minlength="3" maxlength="20" pattern="[a-zA-Z0-9_-]{3,20}" autocomplete="off"></div><div class="field"><label for="new-admin-password">初始密码</label><input id="new-admin-password" type="password" required minlength="6" maxlength="72" autocomplete="new-password"></div><button class="btn btn-ok" type="submit">添加管理员</button></form><p id="admin-create-msg" class="inline-notice" role="status"></p></div>';
 
     // Per-account quotas: admin can see usage and set a limit, without reading content.
@@ -310,6 +310,11 @@ async function createAdmin(event){
 async function promoteUser(id){
   if(!confirm('确定将此用户设为管理员？该用户将可以管理账号和系统设置。'))return;
   try{await ClipTalkUI.api('/api/admin/users/'+encodeURIComponent(id)+'/promote',{method:'POST'});await load()}
+  catch(error){alert(ClipTalkUI.error(error.message))}
+}
+async function demoteUser(id){
+  if(!confirm('确定取消此账号的管理员权限？账号会恢复为普通用户，原有文件、对话、归档和容量设置都会保留。'))return;
+  try{await ClipTalkUI.api('/api/admin/users/'+encodeURIComponent(id)+'/demote',{method:'POST'});await load()}
   catch(error){alert(ClipTalkUI.error(error.message))}
 }
 async function saveQuota(id){

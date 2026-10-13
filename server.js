@@ -26,7 +26,7 @@ const MAX_FILE_SIZE = 500 * 1024 * 1024;
 db.init(DATA_DIR);
 const workspace = new WorkspaceStore(DATA_DIR, db.listUsers());
 const sharing = new SharingStore(workspace, db);
-const RELEASE = '20261013-themes';
+const RELEASE = '20261013-adminroles';
 
 // ── Express & HTTP ────────────────────────────
 const app = express();
@@ -238,6 +238,7 @@ app.patch('/api/account', requireAuth, async (req, res, next) => {
     const user = db.getUserById(req.session.userId);
     if (typeof currentPassword !== 'string' || !db.verifyUser(user.username, currentPassword)) return res.status(401).json({ error: 'wrong_password' });
     const name = username === undefined ? user.username : username;
+    if (user.builtin_admin && name !== user.username) return res.status(409).json({ error: 'protected_admin_name' });
     if (typeof name !== 'string' || !/^[a-zA-Z0-9_-]{3,20}$/.test(name)) return res.status(400).json({ error: 'username_format' });
     if (newPassword !== undefined && (typeof newPassword !== 'string' || newPassword.length < 6)) return res.status(400).json({ error: 'password_short' });
     if (newPassword && Buffer.byteLength(newPassword) > 72) return res.status(400).json({ error: 'password_long' });
@@ -311,6 +312,14 @@ app.post('/api/admin/users/:id/promote', requireAuth, requireAdmin, (req, res) =
   db.promoteUser(user.id);
   io.to(ownerRoom(user.id)).emit('account-role-updated', { role: 'admin' });
   res.json({ ok: true, user: db.getUserById(user.id) });
+});
+
+app.post('/api/admin/users/:id/demote', requireAuth, requireAdmin, (req, res, next) => {
+  try {
+    const user = db.demoteAdministrator(req.params.id, req.session.userId);
+    io.to(ownerRoom(user.id)).emit('account-role-updated', { role: 'user' });
+    res.json({ ok: true, user });
+  } catch (error) { next(error); }
 });
 
 app.post('/api/admin/users/:id/approve', requireAuth, requireAdmin, (req, res) => {
@@ -567,7 +576,8 @@ io.on('connection', socket => {
   socket.join('session:' + socket.request.sessionID);
   socket.emit('init', workspace.snapshot(owner));
   emitStorage(owner);
-  socket.emit('user-info', { username: db.getUserById(owner).username, role: socket.request.session.role, lang: socket.request.session.lang || 'zh-CN' });
+  const user = db.getUserById(owner);
+  socket.emit('user-info', { username: user.username, role: user.role, lang: socket.request.session.lang || 'zh-CN' });
 
   // A logged-out or disabled account cannot keep using an existing socket.
   socket.use((packet, next) => {

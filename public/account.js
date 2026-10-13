@@ -8,6 +8,12 @@
   username.value = user.username;
   function applyPolicy() {
     document.getElementById('account-admin-link').hidden = user.role !== 'admin';
+    username.readOnly = !!user.builtin_admin;
+    const nameHint = document.getElementById('username-hint');
+    nameHint.hidden = !user.builtin_admin;
+    nameHint.textContent = user.builtin_admin ? ui.error('protected_admin_name') : '';
+    if (user.builtin_admin) username.setAttribute('aria-describedby', 'username-hint');
+    else username.removeAttribute('aria-describedby');
     const reason = user.deletionBlockedReason;
     const hint = document.getElementById('last-admin-hint');
     hint.hidden = !reason; hint.textContent = reason ? ui.error(reason) : '';
