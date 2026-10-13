@@ -4,6 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>共享工作区 — Shared Workspace</title>
+<link rel="stylesheet" href="/theme.css">
+<script src="/theme.js"></script>
 <style>
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
   :root {
@@ -160,7 +162,7 @@
   h2 { font-size: 18px; overflow-wrap: anywhere; }
   h3 { margin: 16px 0 8px; font-size: 14px; color: var(--accent); }
   dialog label { display: flex; flex-direction: column; gap: 6px; font-size: 13px; margin: 12px 0; flex: 1; }
-  dialog input, dialog select, dialog textarea { width: 100%; background: var(--input); border: 1px solid var(--border); color: var(--text); border-radius: 5px; padding: 8px; font: inherit; color-scheme: dark; }
+  dialog input, dialog select, dialog textarea { width: 100%; background: var(--input); border: 1px solid var(--border); color: var(--text); border-radius: 5px; padding: 8px; font: inherit; color-scheme: var(--theme-scheme); }
   dialog textarea { min-height: 90px; resize: vertical; }
   .date-fields, .rename-row { display: flex; gap: 10px; }
   .rename-row { margin-top: 12px; align-items: center; flex-wrap: wrap; }
@@ -216,6 +218,7 @@
   <span class="tag panel-toggle" id="toggle-files" onclick="togglePanel('files')" title="显示/隐藏 文件">📁</span>
   <span class="tag" id="admin-btn" onclick="location.href='/admin3.html'" style="display:none" data-t="workspace.admin_panel">管理</span>
   <button class="tag account-label" id="account-label" onclick="location.href='/account.html'" title="管理本账号"></button>
+  <button class="theme-toggle" data-theme-toggle hidden></button>
   <button class="tag" id="sharing-button" onclick="location.href='/sharing.html'" data-t="sharing.title">文件共享</button>
   <button class="tag" onclick="openArchiveList()" data-t="workspace.archives">归档</button>
   <span class="tag" id="lang-btn" onclick="toggleLang()">🌐</span>
@@ -329,6 +332,7 @@ function applyLang() {
   document.querySelectorAll('[data-t]').forEach(el => { el.textContent = t(el.dataset.t); });
   document.querySelectorAll('[data-t-placeholder]').forEach(el => { el.placeholder = t(el.dataset.tPlaceholder); });
   ClipTalkUI.applyBrand(t('workspace.title'), '');
+  ClipTalkTheme.setLanguage(lang);
   var btn = document.getElementById('lang-btn');
   if (btn) btn.textContent = (lang === 'en') ? '🌐 EN' : '🌐 中文';
 }
@@ -344,9 +348,8 @@ let myUserRole = 'user';
 
 async function checkAuth() {
   try {
-    const resp = await fetch('/api/me');
-    if (!resp.ok) { window.location.href = '/login.html'; return; }
-    const user = await resp.json();
+    const user = await ClipTalkTheme.ready;
+    if (!user) { window.location.href = '/login.html'; return; }
     myUserRole = user.role;
     document.getElementById('account-label').textContent = user.username;
     lang = user.language || localStorage.getItem('lang') || 'zh-CN';
@@ -512,6 +515,11 @@ function initApp() {
   });
   socket.on('storage-updated', renderStorage);
   socket.on('site-updated', ClipTalkUI.updateSite);
+  socket.on('preferences-updated', ClipTalkTheme.update);
+  socket.on('account-role-updated', function(data) {
+    myUserRole = data.role;
+    document.getElementById('admin-btn').style.display = data.role === 'admin' ? '' : 'none';
+  });
   socket.on('account-invalidated', function() { location.href = '/login.html'; });
   socket.on('workspace-error', function(data) { showNotice(errorText(data.error)); });
   socket.on('connect_error', function(error) {

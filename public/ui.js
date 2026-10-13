@@ -27,9 +27,11 @@ window.ClipTalkUI = (() => {
   }
   function login() { location.href = '/login.html?next=' + encodeURIComponent(location.pathname + location.search); }
   async function init(page, auth = true) {
-    const user = auth ? await api('/api/me').catch(error => { if (error.status === 401) login(); throw error; }) : await api('/api/me').catch(() => null);
+    const user = await ClipTalkTheme.ready;
+    if (auth && !user) { login(); throw new Error('unauthorized'); }
     dictionary = await api('/api/i18n/' + (language === 'en' ? 'en' : 'zh-CN'));
     document.documentElement.lang = language;
+    ClipTalkTheme.setLanguage(language);
     document.querySelectorAll('[data-t]').forEach(element => { element.textContent = t(element.dataset.t); });
     document.querySelectorAll('[data-t-placeholder]').forEach(element => { element.placeholder = t(element.dataset.tPlaceholder); });
     await siteReady; applyBrand(t('app.title'), t(page));

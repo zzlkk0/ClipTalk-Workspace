@@ -26,7 +26,7 @@ const MAX_FILE_SIZE = 500 * 1024 * 1024;
 db.init(DATA_DIR);
 const workspace = new WorkspaceStore(DATA_DIR, db.listUsers());
 const sharing = new SharingStore(workspace, db);
-const RELEASE = '20261013-sharing';
+const RELEASE = '20261013-themes';
 
 // ── Express & HTTP ────────────────────────────
 const app = express();
@@ -201,10 +201,24 @@ app.post('/api/logout', (req, res) => {
   });
 });
 
+function accountInfo(user) {
+  const deletionBlockedReason = user.builtin_admin ? 'protected_admin'
+    : user.role === 'admin' && db.otherActiveAdmins(user.id) === 0 ? 'last_admin' : null;
+  return { ...user, deletionBlockedReason };
+}
+
 app.get('/api/me', requireAuth, (req, res) => {
   const user = db.getUserById(req.session.userId);
   if (!user) return res.status(401).json({ error: 'unauthorized' });
-  res.json(user);
+  res.json(accountInfo(user));
+});
+
+app.patch('/api/preferences', requireAuth, (req, res) => {
+  const { theme } = req.body;
+  if (!['dark', 'light'].includes(theme)) return res.status(400).json({ error: 'invalid_theme' });
+  db.setTheme(req.session.userId, theme);
+  io.to(ownerRoom(req.session.userId)).emit('preferences-updated', { theme });
+  res.json({ ok: true, theme });
 });
 
 async function invalidateSessions(owner, keep) {
@@ -232,7 +246,7 @@ app.patch('/api/account', requireAuth, async (req, res, next) => {
     db.updateAccount(user.id, name, newPassword);
     req.session.username = name;
     await invalidateSessions(user.id, req.sessionID);
-    res.json({ ok: true, user: db.getUserById(user.id) });
+    res.json({ ok: true, user: accountInfo(db.getUserById(user.id)) });
   } catch (error) { next(error); }
 });
 
@@ -279,6 +293,24 @@ app.get('/api/admin/users', requireAuth, requireAdmin, (req, res) => {
 
 app.get('/api/admin/stats', requireAuth, requireAdmin, (req, res) => {
   res.json(db.getStats());
+});
+
+app.post('/api/admin/administrators', requireAuth, requireAdmin, (req, res) => {
+  const { username, password } = req.body;
+  if (typeof username !== 'string' || !/^[a-zA-Z0-9_-]{3,20}$/.test(username)) return res.status(400).json({ error: 'username_format' });
+  if (typeof password !== 'string' || password.length < 6) return res.status(400).json({ error: 'password_short' });
+  if (Buffer.byteLength(password) > 72) return res.status(400).json({ error: 'password_long' });
+  if (db.getUserByUsername(username)) return res.status(409).json({ error: 'username_taken' });
+  res.status(201).json({ ok: true, user: db.createAdministrator(username, password) });
+});
+
+app.post('/api/admin/users/:id/promote', requireAuth, requireAdmin, (req, res) => {
+  const user = db.getUserById(req.params.id);
+  if (!user) return res.status(404).json({ error: 'not_found' });
+  if (user.status !== 'active') return res.status(400).json({ error: 'inactive_user' });
+  db.promoteUser(user.id);
+  io.to(ownerRoom(user.id)).emit('account-role-updated', { role: 'admin' });
+  res.json({ ok: true, user: db.getUserById(user.id) });
 });
 
 app.post('/api/admin/users/:id/approve', requireAuth, requireAdmin, (req, res) => {

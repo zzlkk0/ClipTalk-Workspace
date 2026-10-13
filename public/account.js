@@ -6,7 +6,19 @@
   catch (error) { ui.notice(ui.error(error.message), true); return; }
   const username = document.getElementById('account-username');
   username.value = user.username;
-  document.getElementById('last-admin-hint').hidden = user.role !== 'admin';
+  function applyPolicy() {
+    document.getElementById('account-admin-link').hidden = user.role !== 'admin';
+    const reason = user.deletionBlockedReason;
+    const hint = document.getElementById('last-admin-hint');
+    hint.hidden = !reason; hint.textContent = reason ? ui.error(reason) : '';
+    document.querySelectorAll('#delete-account-form input, #delete-account-form button').forEach(element => { element.disabled = !!reason; });
+    document.getElementById('delete-username').placeholder = user.username;
+  }
+  applyPolicy();
+  document.getElementById('theme-select').addEventListener('change', async event => {
+    try { await ClipTalkTheme.save(event.target.value); ui.notice(ui.t('preferences.saved')); }
+    catch (error) { ui.notice(ui.error(error.message), true); }
+  });
   document.getElementById('account-form').addEventListener('submit', async event => {
     event.preventDefault();
     const form = event.target, button = form.querySelector('button');
@@ -19,6 +31,7 @@
         ...(newPassword ? { newPassword } : {}),
       }));
       user = result.user; form.reset(); username.value = user.username;
+      applyPolicy();
       ui.notice(ui.t('account.saved'));
     } catch (error) { ui.notice(ui.error(error.message), true); }
     finally { button.disabled = false; }

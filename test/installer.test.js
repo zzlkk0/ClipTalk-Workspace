@@ -222,7 +222,7 @@ elif command not in ['daemon-reload','enable']:raise RuntimeError('Unexpected se
   const usersFile=path.join(target,'data','database','users.db');
   const users=new Database(usersFile);
   const adminHash=users.prepare("SELECT password_hash FROM users WHERE role='admin'").get().password_hash;
-  users.prepare("UPDATE users SET username='existing-admin' WHERE role='admin'").run();
+  users.prepare("UPDATE users SET username='existing-admin', theme='light' WHERE role='admin'").run();
   for(const status of ['active','pending','disabled']) {
     users.prepare('INSERT INTO users (id,username,password_hash,role,status,language,created_at) VALUES (?,?,?,?,?,?,?)')
       .run('u-retained-'+status,'member-'+status,adminHash,'user',status,'en',123456);
@@ -230,7 +230,7 @@ elif command not in ['daemon-reload','enable']:raise RuntimeError('Unexpected se
   users.close();
   const accountsFingerprint=()=>{
     const current=new Database(usersFile,{readonly:true,fileMustExist:true});
-    const rows=current.prepare('SELECT id,username,password_hash,role,status,language,created_at FROM users ORDER BY id').all();current.close();
+    const rows=current.prepare('SELECT id,username,password_hash,role,status,language,created_at,theme,builtin_admin FROM users ORDER BY id').all();current.close();
     return crypto.createHash('sha256').update(JSON.stringify(rows)).digest('hex');
   };
   const expectedAccounts=accountsFingerprint();

@@ -180,7 +180,10 @@
     "recipients_required": "Select between 1 and 100 recipients",
     "invalid_recipient": "Recipient is missing, disabled or is your own account",
     "invalid_share_link": "Enter a valid share link from this website",
-    "already_owned": "This file already belongs to your account"
+    "already_owned": "This file already belongs to your account",
+    "protected_admin": "The initial administrator account cannot be deleted, even after changing its username.",
+    "invalid_theme": "Choose a dark or white theme",
+    "inactive_user": "Activate or approve this user before promoting them to administrator"
   },
   "account": {
     "title": "My account",
@@ -229,5 +232,13 @@
     "copied": "Share link copied",
     "select_copy": "Link selected. Copy it manually.",
     "login_view": "Sign in to view"
+  },
+  "preferences": {
+    "title": "Appearance",
+    "hint": "Your theme is saved to your account and follows you when you sign in on another device.",
+    "theme": "Interface theme",
+    "dark": "Dark theme",
+    "light": "White theme",
+    "saved": "Theme saved"
   }
 }

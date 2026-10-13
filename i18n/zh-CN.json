@@ -180,7 +180,10 @@
     "recipients_required": "请至少选择一个接收用户，最多100个",
     "invalid_recipient": "接收用户不存在、已停用或是自己",
     "invalid_share_link": "请输入本站的有效分享链接",
-    "already_owned": "该文件已属于当前账号"
+    "already_owned": "该文件已属于当前账号",
+    "protected_admin": "默认管理员账号不能删除，即使修改了用户名也会保留。",
+    "invalid_theme": "请选择深色或白色主题",
+    "inactive_user": "请先启用或审批此用户，再设为管理员"
   },
   "account": {
     "title": "我的账号",
@@ -229,5 +232,13 @@
     "copied": "分享链接已复制",
     "select_copy": "链接已选中，请手动复制",
     "login_view": "登录后查看"
+  },
+  "preferences": {
+    "title": "主题设置",
+    "hint": "主题按账号保存，同一账号在不同设备登录后会沿用。",
+    "theme": "界面主题",
+    "dark": "深色主题",
+    "light": "白色主题",
+    "saved": "主题已保存"
   }
 }

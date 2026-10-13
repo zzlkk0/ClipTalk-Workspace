@@ -83,7 +83,8 @@ test('browser: custom branding, archive reader, sharing links and permissions, a
   await publicView.reload(); await waitText(publicView, '#page-notice', '未找到');
   await bob.page.goto(f.base + '/account.html'); await bob.page.locator('#delete-username').fill('bob'); await bob.page.locator('#delete-password').fill(f.password);
   await bob.page.locator('#delete-account-form button').click(); await bob.page.waitForURL(f.base + '/login.html');
-  await admin.page.goto(f.base + '/account.html'); await admin.page.locator('#delete-username').fill('test_admin'); await admin.page.locator('#delete-password').fill(f.password);
-  await admin.page.locator('#delete-account-form button').click(); await waitText(admin.page, '#page-notice', '管理员不能删除');
+  await admin.page.goto(f.base + '/account.html');
+  await waitText(admin.page, '#last-admin-hint', '最后一个有效管理员不能删除');
+  assert.equal(await admin.page.locator('#delete-account-form button').isDisabled(), true);
   assert.deepEqual(errors, []);
 });

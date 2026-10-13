@@ -332,8 +332,9 @@ class WorkspaceStore {
       this.db.prepare('ATTACH DATABASE ? AS accounts').run(path.join(this.dataDir, 'database', 'users.db'));
     }
     const files = this.db.transaction(() => {
-      const user = this.db.prepare('SELECT role FROM accounts.users WHERE id = ?').get(owner);
+      const user = this.db.prepare('SELECT role, builtin_admin FROM accounts.users WHERE id = ?').get(owner);
       if (!user) fail('not_found', 404);
+      if (user.builtin_admin) fail('protected_admin', 409);
       if (user.role === 'admin' && this.db.prepare("SELECT COUNT(*) AS n FROM accounts.users WHERE role = 'admin' AND status = 'active' AND id != ?").get(owner).n === 0) fail('last_admin', 409);
       const names = this.db.prepare('SELECT name FROM assets WHERE owner_id = ?').all(owner);
       this.db.prepare('DELETE FROM share_recipients WHERE user_id = ?').run(owner);

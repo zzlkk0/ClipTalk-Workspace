@@ -8,7 +8,7 @@ const { spawn } = require('node:child_process');
 const Database = require('better-sqlite3');
 const bcrypt = require('bcryptjs');
 
-async function startFixture(t, { legacy = true } = {}) {
+async function startFixture(t, { legacy = true, builtinAdmin = false } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cliptalk-api-'));
   fs.mkdirSync(path.join(dir, 'database')); fs.mkdirSync(path.join(dir, 'uploads'));
   const database = new Database(path.join(dir, 'database', 'users.db'));
@@ -18,9 +18,9 @@ async function startFixture(t, { legacy = true } = {}) {
   );`);
   const password = crypto.randomBytes(16).toString('hex');
   const hash = bcrypt.hashSync(password, 4);
-  for (const [name, role] of [['test_admin','admin'],['alice','user'],['bob','user']]) {
+  for (const [name, role] of [[builtinAdmin ? 'admin' : 'test_admin','admin'],['alice','user'],['bob','user']]) {
     database.prepare('INSERT INTO users (id,username,password_hash,role,status,created_at) VALUES (?,?,?,?,?,?)')
-      .run(name, name, hash, role, 'active', Date.now());
+      .run(builtinAdmin && role === 'admin' ? 'admin-fixture' : name, name, hash, role, 'active', Date.now());
   }
   database.close();
   if (legacy) {

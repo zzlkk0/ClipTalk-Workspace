@@ -1,0 +1,27 @@
+:root { color-scheme: dark; --theme-scheme: dark; }
+:root[data-theme="light"] {
+  color-scheme: light;
+  --theme-scheme: light;
+  --bg: #f5f7fb;
+  --panel: #ffffff;
+  --card: #ffffff;
+  --border: #dce2ec;
+  --text: #243047;
+  --dim: #64748b;
+  --accent: #315dd2;
+  --accent2: #15804c;
+  --green: #15804c;
+  --success: #15804c;
+  --danger: #bd3048;
+  --red: #bd3048;
+  --amber: #946200;
+  --input: #f6f8fc;
+  --hover: #eaf0f9;
+}
+.theme-toggle {
+  font: inherit; font-size: 12px; color: var(--text);
+  background: var(--panel, var(--card)); border: 1px solid var(--border);
+  padding: 5px 9px; border-radius: 7px; cursor: pointer; white-space: nowrap;
+}
+.theme-toggle:hover { border-color: var(--accent); }
+.theme-toggle:disabled { opacity: .5; cursor: wait; }

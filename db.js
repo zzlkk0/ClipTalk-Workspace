@@ -30,6 +30,17 @@ function init(dataDir = __dirname) {
     );
   `);
 
+  // Add preferences to existing databases without replacing account records.
+  if (!db.pragma('table_info(users)').some(column => column.name === 'theme')) {
+    db.exec("ALTER TABLE users ADD COLUMN theme TEXT NOT NULL DEFAULT 'dark'");
+  }
+  if (!db.pragma('table_info(users)').some(column => column.name === 'builtin_admin')) {
+    db.exec("ALTER TABLE users ADD COLUMN builtin_admin INTEGER NOT NULL DEFAULT 0");
+    // Earlier releases created initial administrators with an admin-* ID.
+    // Protect that identity even if its username has already been changed.
+    db.exec("UPDATE users SET builtin_admin = 1 WHERE role = 'admin' AND (id GLOB 'admin-*' OR username = 'admin')");
+  }
+
   // 默认设置
   const defaults = {
     approval_mode: 'manual',
@@ -49,8 +60,8 @@ function init(dataDir = __dirname) {
     const password = crypto.randomBytes(18).toString('base64url');
     const hash = bcrypt.hashSync(password, 12);
     const id = 'admin-' + crypto.randomBytes(8).toString('hex');
-    db.prepare(`INSERT INTO users (id, username, password_hash, role, status, created_at)
-      VALUES (?, ?, ?, 'admin', 'active', ?)`).run(id, 'admin', hash, Date.now());
+    db.prepare(`INSERT INTO users (id, username, password_hash, role, status, created_at, builtin_admin)
+      VALUES (?, ?, ?, 'admin', 'active', ?, 1)`).run(id, 'admin', hash, Date.now());
     console.log('══════════════════════════════════════════');
     console.log('  初始管理员账号已创建');
     console.log('  用户名: admin');
@@ -83,7 +94,7 @@ function verifyUser(username, password) {
 }
 
 function getUserById(id) {
-  return db.prepare('SELECT id, username, role, status, language, created_at, last_login FROM users WHERE id = ?').get(id);
+  return db.prepare('SELECT id, username, role, status, language, theme, builtin_admin, created_at, last_login FROM users WHERE id = ?').get(id);
 }
 
 function getUserByUsername(username) {
@@ -95,7 +106,23 @@ function updateLastLogin(id) {
 }
 
 function listUsers() {
-  return db.prepare('SELECT id, username, role, status, language, created_at, last_login FROM users ORDER BY created_at DESC').all();
+  return db.prepare('SELECT id, username, role, status, language, builtin_admin, created_at, last_login FROM users ORDER BY created_at DESC').all();
+}
+
+function otherActiveAdmins(id) {
+  return db.prepare("SELECT COUNT(*) AS n FROM users WHERE role = 'admin' AND status = 'active' AND id != ?").get(id).n;
+}
+
+function promoteUser(id) {
+  return db.prepare("UPDATE users SET role = 'admin' WHERE id = ? AND status = 'active'").run(id);
+}
+
+function createAdministrator(username, password) {
+  return db.transaction(() => {
+    const user = createUser(username, password);
+    db.prepare("UPDATE users SET role = 'admin', status = 'active' WHERE id = ?").run(user.id);
+    return getUserById(user.id);
+  })();
 }
 
 function getPendingUsers() {
@@ -131,6 +158,10 @@ function updateAccount(id, username, password) {
   })();
 }
 
+function setTheme(id, theme) {
+  return db.prepare('UPDATE users SET theme = ? WHERE id = ?').run(theme, id);
+}
+
 // ─── 设置 ───────────────────────────────────────
 
 function getSetting(key) {
@@ -157,6 +188,9 @@ module.exports = {
   getUserByUsername,
   updateLastLogin,
   listUsers,
+  otherActiveAdmins,
+  promoteUser,
+  createAdministrator,
   getPendingUsers,
   approveUser,
   rejectUser,
@@ -164,6 +198,7 @@ module.exports = {
   deleteUser,
   changePassword,
   updateAccount,
+  setTheme,
   getSetting,
   setSetting,
   getStats,
