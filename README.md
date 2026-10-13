@@ -42,7 +42,7 @@ curl -fsSL https://raw.githubusercontent.com/zzlkk0/ClipTalk-Workspace/main/depl
   | bash -s -- --mode native --port 18000 --dir "$HOME/cliptalk-workspace"
 ```
 
-The default HTTP port is **8000**. The application listens on the server's interfaces; allow the chosen port in your server/network configuration, or put it behind a reverse proxy. Use HTTPS for encrypted transport.
+New installations default to HTTP port **8000**. Updates automatically keep the existing port; supply `--port` only when you want to change it. The application listens on the server's interfaces; allow the chosen port in your server/network configuration, or put it behind a reverse proxy. Use HTTPS for encrypted transport.
 
 The native service is `cliptalk-workspace.service`. The default directory is `$HOME/cliptalk-workspace` for a normal user and `/opt/cliptalk-workspace` for root. Root installation uses a dedicated unprivileged `cliptalk` service account.
 
@@ -50,6 +50,12 @@ The native service is `cliptalk-workspace.service`. The default directory is `$H
 sudo systemctl status cliptalk-workspace.service
 sudo journalctl -u cliptalk-workspace.service -n 30 --no-pager
 sudo systemctl restart cliptalk-workspace.service
+```
+
+Startup checks connect directly to loopback, bypassing HTTP proxy settings. If a check fails, the installer prints service status and recent logs with initial passwords hidden before rolling back. To check the running service yourself:
+
+```bash
+curl --noproxy '*' -fsS --max-time 5 http://127.0.0.1:8000/api/health
 ```
 
 Initial username: **admin**. A random initial password is printed only when a new administrator account is created. Read it in the first-start logs, then change it in the admin panel. Existing passwords are preserved during upgrades.
@@ -111,7 +117,14 @@ CLIPTALK_DATA_DIR=/srv/cliptalk-data node server.js
 
 ## Updating and backups
 
-Re-run the installer with the same `--mode`, `--dir` and `--port`. You can pin a branch, tag or commit with `--ref` (without slashes).
+Re-run the installer with the same `--mode` and `--dir`. The existing port is preserved automatically. To switch to port 13131 once, run:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/zzlkk0/ClipTalk-Workspace/main/deploy.sh \
+  | bash -s -- --port 13131
+```
+
+Later updates can omit `--port`. Native installations retain the port in `data/config.json`, including manual changes. Docker installations retain their saved host port. You can pin a branch, tag or commit with `--ref` (without slashes).
 
 The installer builds the new release before stopping the existing application. It backs up the stopped data, activates the new release, checks `/api/health`, and restores the previous release and completed data backup if startup fails. Installer backups are stored in the installation directory's `backups/` folder. Keep these private.
 

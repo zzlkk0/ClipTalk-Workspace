@@ -4,6 +4,7 @@ umask 077
 
 mode=native
 port=8000
+port_explicit=0
 repo=zzlkk0/ClipTalk-Workspace
 ref=main
 dry_run=0
@@ -13,6 +14,7 @@ usage() {
 Usage: bash deploy.sh [--mode native|docker] [--port 8000] [--dir PATH] [--ref main] [--dry-run]
 
 Default: native Node.js + systemd, without Docker, on Ubuntu/Debian or Alibaba Cloud Linux 3.
+New installations use port 8000. Updates keep the existing port unless --port is supplied.
 Native mode installs a private Node.js 22 runtime if Node.js 22/24 is unavailable.
 Docker mode requires an existing Docker Engine and Compose plugin.
 Re-run the same command to update. Existing account data and passwords are kept.
@@ -23,7 +25,7 @@ while (($#)); do
   case "$1" in
     --mode|--port|--dir|--ref)
       if (($#<2)); then printf 'Missing value for %s\n' "$1" >&2; exit 2; fi
-      case "$1" in --mode) mode=$2;; --port) port=$2;; --dir) install_dir=$2;; --ref) ref=$2;; esac
+      case "$1" in --mode) mode=$2;; --port) port=$2; port_explicit=1;; --dir) install_dir=$2;; --ref) ref=$2;; esac
       shift 2;;
     --dry-run) dry_run=1; shift;;
     --help|-h) usage; exit 0;;
@@ -31,10 +33,35 @@ while (($#)); do
   esac
 done
 [[ "$mode" == native || "$mode" == docker ]] || { printf 'Mode must be native or docker.\n' >&2; exit 2; }
-[[ "$port" =~ ^[0-9]{1,5}$ ]] && ((10#$port>=1 && 10#$port<=65535)) || { printf 'Invalid port.\n' >&2; exit 2; }
-port=$((10#$port))
 [[ "$ref" =~ ^[a-zA-Z0-9._-]+$ ]] || { printf 'Use a branch, tag or commit without slashes.\n' >&2; exit 2; }
 [[ "$install_dir" == /* && "$install_dir" != / && "$install_dir" != *[$'\n\r\t %"\\']* ]] || { printf 'Choose an absolute installation path without whitespace or special characters.\n' >&2; exit 2; }
+if ((!port_explicit)); then
+  saved_port=''
+  # Native config is authoritative, including ports changed by hand. Docker's
+  # config contains the container port, so reuse its saved host port instead.
+  if [[ "$mode" == native && -f "$install_dir/data/config.json" ]]; then
+    command -v python3 >/dev/null || { printf 'Reading the existing native port requires Python 3. Install it or supply --port explicitly.\n' >&2; exit 1; }
+    if ! saved_port=$(python3 - "$install_dir/data/config.json" <<'PY'
+import json, sys
+try:
+    with open(sys.argv[1]) as source:
+        config = json.load(source)
+    port = config.get('port')
+    if port is not None:
+        if type(port) is not int or not 1 <= port <= 65535:
+            raise ValueError('Invalid configured port')
+        print(port)
+except (OSError, ValueError, AttributeError):
+    print('Cannot read the existing port from data/config.json; configuration was not changed.', file=sys.stderr)
+    sys.exit(1)
+PY
+    ); then exit 1; fi
+  fi
+  if [[ -z "$saved_port" && -f "$install_dir/.port" ]]; then saved_port=$(cat "$install_dir/.port"); fi
+  if [[ -n "$saved_port" ]]; then port=$saved_port; fi
+fi
+[[ "$port" =~ ^[0-9]{1,5}$ ]] && ((10#$port>=1 && 10#$port<=65535)) || { printf 'Invalid port.\n' >&2; exit 2; }
+port=$((10#$port))
 if ((dry_run)); then
   printf 'Plan only: mode=%s port=%s directory=%s ref=%s\n' "$mode" "$port" "$install_dir" "$ref"
   printf 'No files, packages, containers or services were changed.\n'
@@ -106,6 +133,18 @@ export CLIPTALK_HTTP_PORT="$port" CLIPTALK_DATA_PATH="$install_dir/data"
 compose() { "${docker_cmd[@]}" compose --project-name cliptalk-workspace --file "$1/compose.yaml" "${@:2}"; }
 stop_app() {
   if [[ "$mode" == native ]]; then "${privilege[@]}" systemctl stop "$service"; else compose "$1" stop app; fi
+}
+startup_diagnostics() {
+  # Capture the failed release's logs before rollback restarts the old release.
+  printf 'Service status and recent logs (passwords redacted):\n' >&2
+  {
+    if [[ "$mode" == native ]]; then
+      "${privilege[@]}" systemctl status "$service" --no-pager -l || true
+      "${privilege[@]}" journalctl -u "$service" -n 80 --no-pager || true
+    else
+      compose "$release_dir" logs --no-color --tail 80 app || true
+    fi
+  } 2>&1 | sed -E 's/(密码:[[:space:]]*).*/\1[redacted]/; s/([Pp]assword:[[:space:]]*).*/\1[redacted]/' >&2 || true
 }
 rollback() {
   local status=$?
@@ -213,10 +252,16 @@ if [[ "$mode" == native ]]; then
 else compose "$release_dir" up -d --no-build; fi
 healthy=0
 for attempt in $(seq 1 30); do
-  if curl -fsS --max-time 2 "http://127.0.0.1:$port/api/health" | tr -d '[:space:]' | grep -q '"ok":true'; then healthy=1; break; fi
+  # A loopback check must not go through HTTP_PROXY/ALL_PROXY.
+  if curl --noproxy '*' -fsS --max-time 2 "http://127.0.0.1:$port/api/health" 2>"$work_dir/health-error" | tr -d '[:space:]' | grep -q '"ok":true'; then healthy=1; break; fi
   sleep 1
 done
-((healthy)) || { printf 'Startup health check failed.\n' >&2; exit 1; }
+if ((!healthy)); then
+  printf 'Startup health check failed for http://127.0.0.1:%s/api/health.\n' "$port" >&2
+  if [[ -s "$work_dir/health-error" ]]; then cat "$work_dir/health-error" >&2; fi
+  startup_diagnostics
+  exit 1
+fi
 printf '%s\n' "$mode" > "$install_dir/.deployment-mode"
 printf '%s\n' "$port" > "$install_dir/.port"
 activated=0

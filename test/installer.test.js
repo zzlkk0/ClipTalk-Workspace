@@ -10,6 +10,13 @@ const {promisify}=require('node:util');
 const run=promisify(execFile);
 const root=path.join(__dirname,'..');
 function executable(file,text){fs.writeFileSync(file,text,{mode:0o755});}
+async function unusedPort(){
+  const reservation=net.createServer();
+  await new Promise(resolve=>reservation.listen(0,'127.0.0.1',resolve));
+  const port=reservation.address().port;
+  await new Promise(resolve=>reservation.close(resolve));
+  return port;
+}
 function isolatedInstaller(dir,release){
   fs.writeFileSync(path.join(dir,'os-release'),release);
   fs.mkdirSync(path.join(dir,'systemd'));
@@ -31,6 +38,31 @@ test('installer options validate without touching packages or services',async()=
   }
 });
 
+test('installer keeps existing native and Docker host ports unless explicitly overridden',async t=>{
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'cliptalk-port-'));
+  t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
+  const data=path.join(dir,'data');fs.mkdirSync(data);
+  const config=path.join(data,'config.json'),metadata=path.join(dir,'.port');
+  const args=[path.join(root,'deploy.sh'),'--dry-run','--dir',dir];
+  const plan=async(...options)=>(await run('bash',[...args,...options])).stdout;
+  assert.ok((await plan()).includes('port=8000'));
+  fs.writeFileSync(metadata,'13131\n');
+  assert.ok((await plan()).includes('port=13131'));
+  fs.writeFileSync(config,JSON.stringify({port:14343}));
+  assert.ok((await plan()).includes('port=14343'),'Manual native configuration changes take precedence over stale metadata');
+  assert.ok((await plan('--mode','docker')).includes('port=13131'),'Docker retains its host port, rather than its container port');
+  assert.ok((await plan('--port','18000')).includes('port=18000'));
+  assert.equal(JSON.parse(fs.readFileSync(config)).port,14343,'A preview must not change the stored port');
+  for(const content of ['{broken',JSON.stringify({port:0}),JSON.stringify({port:65536}),JSON.stringify({port:true})]){
+    fs.writeFileSync(config,content);
+    await assert.rejects(plan(),error=>error.code===1&&error.stderr.includes('configuration was not changed'));
+    assert.equal(fs.readFileSync(config,'utf8'),content);
+  }
+  fs.rmSync(config);
+  fs.writeFileSync(metadata,'not-a-port\n');
+  await assert.rejects(plan(),error=>error.code===2&&error.stderr.includes('Invalid port'));
+});
+
 test('native installer rejects old glibc before changing packages, data or services',async t=>{
   const dir=fs.mkdtempSync(path.join(os.tmpdir(),'cliptalk-old-glibc-'));
   t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
@@ -49,7 +81,7 @@ for(const platform of [
   {name:'Ubuntu/Debian',manager:'apt-get',release:'ID=debian\nVERSION_ID=12\nPRETTY_NAME="Debian test fixture"\n'},
   {name:'Alibaba Cloud Linux 3 with dnf',manager:'dnf',release:'ID=alinux\nID_LIKE="rhel fedora centos anolis"\nVERSION_ID=3\nPRETTY_NAME="Alibaba Cloud Linux 3"\n'},
   {name:'Alibaba Cloud Linux 3 with yum fallback',manager:'yum',release:'ID=alinux\nID_LIKE="rhel fedora centos anolis"\nVERSION_ID=3\nPRETTY_NAME="Alibaba Cloud Linux 3"\n'}
-]) test('native installer on '+platform.name+': fresh startup, persistent update and rollback with mocked host commands',async t=>{
+]) test('native installer on '+platform.name+': fresh startup, update through proxy and rollback with mocked host commands',async t=>{
   const dir=fs.mkdtempSync(path.join(os.tmpdir(),'cliptalk-installer-'));
   const bin=path.join(dir,'bin'),target=path.join(dir,'app'),source=path.join(dir,'source');
   fs.mkdirSync(bin);fs.mkdirSync(source);
@@ -75,13 +107,18 @@ with open(os.environ['CLIPTALK_INSTALL_TEST_ROOT']+'/packages.log','a') as log:
   executable(path.join(bin,'npm'),'#!/bin/sh\nln -s "$CLIPTALK_INSTALL_TEST_MODULES" node_modules\n');
   executable(path.join(bin,'sudo'),'#!/bin/sh\nexec "$@"\n');
   executable(path.join(bin,'seq'),'#!/bin/sh\nprintf "1\\n2\\n3\\n"\n');
-  executable(path.join(bin,'journalctl'),'#!/bin/sh\nexit 0\n');
+  executable(path.join(bin,'journalctl'),`#!/usr/bin/env python3
+import os,pathlib
+log=pathlib.Path(os.environ['CLIPTALK_INSTALL_TEST_ROOT'])/'service.log'
+if log.exists():print(log.read_text(),end='')
+`);
   executable(path.join(bin,'curl'),`#!/usr/bin/env python3
 import os,sys,shutil,subprocess
 args=sys.argv[1:]
 if any('api.github.com/repos/' in a for a in args):
  shutil.copyfile(os.environ['CLIPTALK_INSTALL_TEST_ARCHIVE'],args[args.index('-o')+1]);sys.exit(0)
-if os.environ.get('CLIPTALK_INSTALL_TEST_FAIL_HEALTH')=='1' and any('/api/health' in a for a in args):sys.exit(22)
+if os.environ.get('CLIPTALK_INSTALL_TEST_FAIL_HEALTH')=='1' and any('/api/health' in a for a in args):
+ print('curl: (22) Forced health check failure',file=sys.stderr);sys.exit(22)
 sys.exit(subprocess.call([${JSON.stringify(realCurl)}]+args))
 `);
   executable(path.join(bin,'install'),`#!/usr/bin/env python3
@@ -110,6 +147,8 @@ elif command=='restart':
  logfile=open(root/'service.log','ab');env=os.environ.copy();env['CLIPTALK_DATA_DIR']=data;env['CLIPTALK_HOST']='127.0.0.1'
  child=subprocess.Popen([${JSON.stringify(realNode)},cwd+'/server.js'],cwd=cwd,env=env,stdout=logfile,stderr=logfile,start_new_session=True)
  pidfile.write_text(str(child.pid))
+elif command=='status':
+ print('Mock service status: active (running)');sys.exit(3)
 elif command not in ['daemon-reload','enable']:raise RuntimeError('Unexpected service action')
 `);
   const env={...process.env,PATH:bin+path.delimiter+process.env.PATH,
@@ -117,9 +156,9 @@ elif command not in ['daemon-reload','enable']:raise RuntimeError('Unexpected se
     CLIPTALK_INSTALL_TEST_ROOT:dir,CLIPTALK_INSTALL_TEST_ARCHIVE:archive,
     CLIPTALK_INSTALL_TEST_MODULES:path.join(root,'node_modules')};
   t.after(async()=>{await run(path.join(bin,'systemctl'),['stop','cliptalk-workspace.service'],{env});fs.rmSync(dir,{recursive:true,force:true});});
-  const reservation=net.createServer();await new Promise(resolve=>reservation.listen(0,'127.0.0.1',resolve));
-  const port=reservation.address().port;await new Promise(resolve=>reservation.close(resolve));
-  const args=[script,'--mode','native','--port',String(port),'--dir',target];
+  const port=await unusedPort();
+  const updateArgs=[script,'--mode','native','--dir',target];
+  const args=[...updateArgs,'--port',String(port)];
   const first=await run('bash',args,{env});assert.ok(first.stdout.includes('ClipTalk is ready'));
   const packages=fs.readFileSync(path.join(dir,'packages.log'),'utf8').trim().split('\n').map(line=>JSON.parse(line));
   assert.ok(packages.every(args=>args[0]===platform.manager));
@@ -128,20 +167,60 @@ elif command not in ['daemon-reload','enable']:raise RuntimeError('Unexpected se
   assert.ok(install.includes(platform.manager==='apt-get'?'g++':'gcc-c++'));
   const firstRelease=fs.realpathSync(path.join(target,'current'));
   const configFile=path.join(target,'data','config.json');const secret=JSON.parse(fs.readFileSync(configFile)).sessionSecret;
+  assert.equal(JSON.parse(fs.readFileSync(configFile)).port,port);
+  assert.equal(fs.readFileSync(path.join(target,'.port'),'utf8').trim(),String(port));
   const Database=require('better-sqlite3');
   const database=new Database(path.join(target,'data','database','workspace.db'));
   database.prepare('INSERT INTO workspaces (owner_id,clipboard_text) VALUES (?,?)').run('test-owner','preserve me');database.close();
-  const second=await run('bash',args,{env});assert.ok(second.stdout.includes('Previous data backup'));
+  // Reproduce curl (52): the configured proxy accepts and closes HTTP requests.
+  let proxyRequests=0;
+  const proxy=net.createServer(socket=>{proxyRequests++;socket.once('data',()=>socket.end());});
+  await new Promise(resolve=>proxy.listen(0,'127.0.0.1',resolve));
+  t.after(()=>new Promise(resolve=>proxy.close(resolve)));
+  const proxyUrl='http://127.0.0.1:'+proxy.address().port;
+  const proxyEnv={...env,http_proxy:proxyUrl,HTTP_PROXY:proxyUrl,https_proxy:proxyUrl,HTTPS_PROXY:proxyUrl,
+    all_proxy:proxyUrl,ALL_PROXY:proxyUrl,no_proxy:'',NO_PROXY:''};
+  await assert.rejects(run(realCurl,['-fsS','--max-time','2','http://127.0.0.1:'+port+'/api/health'],{env:proxyEnv}),
+    error=>error.code===52&&error.stderr.includes('Empty reply from server'));
+  const proxyRequestsBeforeUpdate=proxyRequests;
+  assert.ok(proxyRequestsBeforeUpdate>0);
+  fs.writeFileSync(path.join(target,'.port'),'8000\n');
+  const second=await run('bash',updateArgs,{env:proxyEnv});assert.ok(second.stdout.includes('Previous data backup'));
+  assert.equal(proxyRequests,proxyRequestsBeforeUpdate,'Loopback health checks must bypass the configured proxy');
   const secondRelease=fs.realpathSync(path.join(target,'current'));assert.notEqual(secondRelease,firstRelease);
   assert.equal(JSON.parse(fs.readFileSync(configFile)).sessionSecret,secret);
-  await assert.rejects(run('bash',args,{env:{...env,CLIPTALK_INSTALL_TEST_FAIL_HEALTH:'1'}}),error=>error.code===1);
-  assert.equal(fs.realpathSync(path.join(target,'current')),secondRelease);
+  assert.equal(JSON.parse(fs.readFileSync(configFile)).port,port);
+  assert.equal(fs.readFileSync(path.join(target,'.port'),'utf8').trim(),String(port));
+  const changedPort=await unusedPort();
+  const changed=await run('bash',[...updateArgs,'--port',String(changedPort)],{env:proxyEnv});
+  assert.ok(changed.stdout.includes('ClipTalk is ready on port '+changedPort));
+  assert.equal(JSON.parse(fs.readFileSync(configFile)).port,changedPort);
+  assert.equal(fs.readFileSync(path.join(target,'.port'),'utf8').trim(),String(changedPort));
+  const changedRelease=fs.realpathSync(path.join(target,'current'));assert.notEqual(changedRelease,secondRelease);
+  const diagnosticPassword='INSTALLER_DIAGNOSTIC_PASSWORD_SHOULD_BE_REDACTED';
+  fs.appendFileSync(path.join(dir,'service.log'),'Password: '+diagnosticPassword+'\n');
+  const initialPassword=fs.readFileSync(path.join(dir,'service.log'),'utf8').match(/密码:\s*(\S+)/)?.[1];
+  assert.ok(initialPassword);
+  await assert.rejects(run('bash',args,{env:{...proxyEnv,CLIPTALK_INSTALL_TEST_FAIL_HEALTH:'1'}}),error=>{
+    assert.equal(error.code,1);
+    assert.ok(error.stderr.includes('curl: (22) Forced health check failure'));
+    assert.ok(error.stderr.includes('Mock service status: active (running)'));
+    assert.ok(error.stderr.includes('Password: [redacted]'));
+    assert.ok(error.stderr.includes('密码:   [redacted]'));
+    assert.ok(!error.stderr.includes(diagnosticPassword));
+    assert.ok(!error.stderr.includes(initialPassword));
+    assert.ok(error.stderr.indexOf('Service status and recent logs')<error.stderr.indexOf('rolling back'));
+    return true;
+  });
+  assert.equal(fs.realpathSync(path.join(target,'current')),changedRelease);
   assert.equal(JSON.parse(fs.readFileSync(configFile)).sessionSecret,secret);
+  assert.equal(JSON.parse(fs.readFileSync(configFile)).port,changedPort,'Failed port changes restore the previous configuration');
+  assert.equal(fs.readFileSync(path.join(target,'.port'),'utf8').trim(),String(changedPort));
   const restored=new Database(path.join(target,'data','database','workspace.db'));
   assert.equal(restored.prepare('SELECT clipboard_text FROM workspaces WHERE owner_id=?').get('test-owner').clipboard_text,'preserve me');restored.close();
   let response;
   for(let attempt=0;attempt<40;attempt++){
-    try{response=await fetch('http://127.0.0.1:'+port+'/api/health');if(response.ok)break;}catch{}
+    try{response=await fetch('http://127.0.0.1:'+changedPort+'/api/health');if(response.ok)break;}catch{}
     await new Promise(resolve=>setTimeout(resolve,50));
   }
   assert.equal(response?.status,200);
