@@ -75,6 +75,8 @@ test('receiving shared and archived files enforces concurrent quota and keeps in
   assert.equal(fs.readdirSync(path.join(f.dir, 'uploads')).length, 2);
   const publicShare = (await f.request('/api/shares', alice, json('POST', { name: file.name, visibility: 'public' }))).data;
   assert.equal((await f.request('/api/archives/' + archived.data.id, alice, json('DELETE', { confirm: true }))).status, 200);
+  assert.equal((await f.request(url, bob)).status, 200);
+  assert.equal((await f.request('/api/drive/files', alice, json('DELETE', { names: [file.name], confirm: true }))).status, 200);
   assert.equal((await f.request(url, bob)).status, 404);
   assert.equal((await f.request('/api/shares/' + publicShare.token)).status, 404);
   assert.equal(await (await fetch(f.base + '/uploads/' + copied.name, { headers: { Cookie: bob } })).text(), 'x'.repeat(600));

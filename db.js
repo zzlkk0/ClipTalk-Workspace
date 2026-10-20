@@ -50,6 +50,7 @@ function init(dataDir = __dirname) {
     approval_mode: 'manual',
     registration_enabled: 'true',
     site_name: '',
+    idle_timeout_seconds: '1800',
   };
   for (const [key, value] of Object.entries(defaults)) {
     const row = db.prepare('SELECT value FROM settings WHERE key = ?').get(key);

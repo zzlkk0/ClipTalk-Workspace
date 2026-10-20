@@ -224,13 +224,15 @@ class WorkspaceStore {
   downloadable(owner, name) {
     return this.db.prepare(`SELECT a.* FROM assets a WHERE a.owner_id = ? AND a.name = ?
       AND (EXISTS (SELECT 1 FROM files f WHERE f.name = a.name)
-        OR EXISTS (SELECT 1 FROM message_assets ma WHERE ma.asset_name = a.name))`).get(owner, name);
+        OR EXISTS (SELECT 1 FROM message_assets ma WHERE ma.asset_name = a.name)
+        ${this.drive ? 'OR EXISTS (SELECT 1 FROM drive_files d WHERE d.name = a.name)' : ''})`).get(owner, name);
   }
 
   cleanupAssets(owner) {
     const unused = this.db.prepare(`SELECT name FROM assets a WHERE a.owner_id = ?
       AND NOT EXISTS (SELECT 1 FROM files f WHERE f.name = a.name)
-      AND NOT EXISTS (SELECT 1 FROM message_assets ma WHERE ma.asset_name = a.name)`).all(owner);
+      AND NOT EXISTS (SELECT 1 FROM message_assets ma WHERE ma.asset_name = a.name)
+      ${this.drive ? 'AND NOT EXISTS (SELECT 1 FROM drive_files d WHERE d.name = a.name)' : ''}`).all(owner);
     for (const { name } of unused) {
       try {
         fs.rmSync(path.join(this.uploadsDir, name), { force: true });
@@ -247,6 +249,10 @@ class WorkspaceStore {
       if (scope === 'chat') this.db.prepare('DELETE FROM messages WHERE owner_id = ? AND archive_id IS NULL').run(owner);
       else {
         // Archived conversations keep their attachments when the active file list is cleared.
+        if (this.drive) this.db.prepare(`DELETE FROM drive_files WHERE owner_id = ?
+          AND name IN (SELECT name FROM files WHERE owner_id = ? AND archive_id IS NULL)
+          AND NOT EXISTS (SELECT 1 FROM message_assets ma JOIN messages m ON m.id = ma.message_id
+            WHERE ma.asset_name = drive_files.name AND m.archive_id IS NOT NULL)`).run(owner, owner);
         this.db.prepare(`DELETE FROM message_assets WHERE message_id IN
           (SELECT id FROM messages WHERE owner_id = ? AND archive_id IS NULL)
           AND asset_name IN (SELECT name FROM files WHERE owner_id = ? AND archive_id IS NULL)`).run(owner, owner);
@@ -343,6 +349,7 @@ class WorkspaceStore {
       this.db.prepare('DELETE FROM files WHERE owner_id = ?').run(owner);
       this.db.prepare('DELETE FROM archives WHERE owner_id = ?').run(owner);
       this.db.prepare('DELETE FROM assets WHERE owner_id = ?').run(owner);
+      if (this.drive) this.db.prepare('DELETE FROM drive_folders WHERE owner_id = ?').run(owner);
       this.db.prepare('DELETE FROM workspaces WHERE owner_id = ?').run(owner);
       this.db.prepare('DELETE FROM quotas WHERE owner_id = ?').run(owner);
       this.db.prepare('DELETE FROM accounts.users WHERE id = ?').run(owner);

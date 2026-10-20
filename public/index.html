@@ -207,6 +207,7 @@
     #archive-rename-form { padding: 8px 12px; }
   }
 </style>
+<link rel="stylesheet" href="/drive.css">
 </head>
 <body>
 
@@ -225,6 +226,7 @@
   <span class="tag" onclick="doLogout()" data-t="workspace.logout">退出</span>
 </div>
 
+<div id="idle-notice" hidden><span data-t="connection.idle">长时间未操作，实时连接已断开。</span><button class="small-btn" id="resume-connection" data-t="connection.resume">恢复连接</button></div>
 <div class="workspace-note"><span data-t="workspace.account_note">工作区按账号独立，同一账号的所有设备实时同步。</span><span id="storage-usage" role="status"></span><progress id="storage-progress" max="100" value="0" aria-label="空间使用率"></progress></div>
 <div class="main" id="main">
   <!-- 剪贴板 -->
@@ -263,16 +265,18 @@
   <div class="panel" id="panel-files" data-panel="files">
     <div class="panel-header">
       <span class="panel-title">📁 <span data-t="workspace.files">文件传输</span></span>
-      <button class="small-btn" onclick="openArchiveForm('files')" data-t="workspace.archive">归档</button>
-      <button class="small-btn danger" onclick="clearWorkspace('files')" data-t="workspace.clear_all">清空</button>
+      <button class="small-btn" id="drive-new-folder" data-t="drive.new_folder">新建文件夹</button>
       <span class="collapse-btn" onclick="togglePanel('files')">✕</span>
     </div>
+    <nav id="drive-breadcrumbs" aria-label="文件夹路径"></nav>
+    <div class="drive-toolbar"><button class="small-btn" id="drive-select-all" data-t="drive.select_all">全选</button><button class="small-btn" id="drive-move" data-t="drive.move" disabled>移动</button><button class="small-btn danger" id="drive-delete" data-t="drive.delete" disabled>删除</button><button class="small-btn" id="drive-refresh" data-t="drive.refresh">刷新</button><span id="drive-selection"></span></div>
     <div class="drop-zone" id="drop-zone" onclick="document.getElementById('file-input').click()">
       <span class="drop-icon">📤</span>
       <span data-t="workspace.drop_text">拖拽文件到这里 或 点击选择</span><br>
       <small data-t="workspace.drop_max">最大 500MB / 文件</small>
     </div>
     <input type="file" id="file-input" multiple style="display:none" onchange="uploadFiles(this.files)">
+    <progress id="drive-upload-progress" max="1" value="0" hidden></progress><button class="small-btn" id="drive-cancel-upload" data-t="drive.cancel_upload" hidden>取消上传</button>
     <div id="file-list"></div>
   </div>
 </div>
@@ -288,7 +292,7 @@
       <label><span data-t="workspace.start_date">开始日期</span><input id="archive-start" type="date" required></label>
       <label><span data-t="workspace.end_date">结束日期</span><input id="archive-end" type="date" required></label>
     </div>
-    <label><span data-t="workspace.archive_scope">归档内容</span><select id="archive-scope"><option value="chat" data-t="workspace.chat">对话</option><option value="files" data-t="workspace.files">文件传输</option><option value="both" data-t="workspace.chat_and_files">对话和文件</option></select></label>
+    <label><span data-t="workspace.archive_scope">归档内容</span><select id="archive-scope"><option value="chat" data-t="workspace.chat">对话</option></select></label>
     <p id="archive-form-error" class="error" role="alert"></p>
     <div class="dialog-actions"><button id="archive-submit" type="submit" class="primary" data-t="workspace.create_archive">创建归档</button></div>
   </form>
@@ -310,6 +314,9 @@
 </dialog>
 
 <script src="/ui.js"></script>
+<dialog id="drive-name-dialog"><form id="drive-name-form"><h2 id="drive-name-title"></h2><label for="drive-name" data-t="drive.folder_name">文件夹名称</label><input id="drive-name" required maxlength="120" autocomplete="off"><p id="drive-name-error" class="error" role="alert"></p><div class="dialog-actions"><button type="button" class="small-btn" onclick="document.getElementById('drive-name-dialog').close()" data-t="workspace.cancel">取消</button><button type="submit" class="primary" data-t="admin.btn_save">保存</button></div></form></dialog>
+<dialog id="drive-move-dialog"><form id="drive-move-form"><h2 data-t="drive.move">移动</h2><label for="drive-destination" data-t="drive.destination">目标文件夹</label><select id="drive-destination"></select><p id="drive-move-error" class="error" role="alert"></p><div class="dialog-actions"><button type="button" class="small-btn" onclick="document.getElementById('drive-move-dialog').close()" data-t="workspace.cancel">取消</button><button type="submit" class="primary" data-t="drive.move">移动</button></div></form></dialog>
+<script src="/lifecycle.js"></script><script src="/drive.js"></script>
 <script src="/socket.io/socket.io.js"></script>
 <script>
 // ─── i18n ───────────────────────────────────────
@@ -488,6 +495,8 @@ let socket, clipboardSyncing = false;
 
 function initApp() {
   socket = io();
+  ClipTalkLifecycle.init(socket);
+  ClipTalkDrive.init(socket);
 
   var statusDot = document.getElementById('status-dot');
   var statusText = document.getElementById('status-text');
@@ -615,29 +624,10 @@ function initApp() {
     if (e.dataTransfer.files.length > 0) uploadFiles(e.dataTransfer.files);
   });
 
-  window.uploadFiles = async function(fileList) {
-    var formData = new FormData();
-    for (var i = 0; i < fileList.length; i++) formData.append('files', fileList[i]);
-    showNotice(t('workspace.uploading') + '...');
-    try {
-      var resp = await fetch('/upload', {method:'POST',body:formData});
-      var data = await resp.json();
-      if (!resp.ok) throw new Error(data.error || 'server_error');
-      showNotice(t('workspace.upload_done'));
-      document.getElementById('file-input').value = '';
-    } catch(e) {
-      showNotice(errorText(e.message));
-    }
-  };
-
-  socket.on('files-updated', function(files) { renderFileList(files); });
-
-  function renderFileList(files) { renderFiles(fileList, files, true); }
-  window.deleteFile = async function(name) {
-    if (!confirm(t('workspace.delete_file_confirm'))) return;
-    try { await api('/api/files/' + encodeURIComponent(name), {method:'DELETE'}); }
-    catch(error) { showNotice(errorText(error.message)); }
-  };
+  window.uploadFiles = ClipTalkDrive.uploadFiles;
+  window.deleteFile = ClipTalkDrive.deleteFile;
+  socket.on('files-updated', ClipTalkDrive.refresh);
+  function renderFileList() { ClipTalkDrive.refresh(); }
 
   document.addEventListener('keydown', function(e) {
     if (e.ctrlKey && e.key === 'k') { e.preventDefault(); chatInput.focus(); }

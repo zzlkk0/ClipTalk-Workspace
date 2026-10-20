@@ -121,6 +121,9 @@ test('admin quota changes, concurrent uploads, batch rejection and archive delet
   assert.equal((await f.request('/api/archives/'+archive.id,b,json('DELETE',{}))).status,400);
   assert.equal((await f.request('/api/archives/'+archive.id,a,json('DELETE',{confirm:true}))).status,404);
   assert.equal((await f.request('/api/archives/'+archive.id,b,json('DELETE',{confirm:true}))).status,200);
+  assert.equal((await f.request('/api/storage',b)).data.usedBytes,1000);
+  assert.equal((await f.request('/uploads/'+uploaded.data.files[0].name,b)).status,200);
+  assert.equal((await f.request('/api/drive/files',b,json('DELETE',{names:[uploaded.data.files[0].name],confirm:true}))).status,200);
   assert.equal((await f.request('/api/storage',b)).data.usedBytes,0);
   assert.equal((await f.request('/uploads/'+uploaded.data.files[0].name,b)).status,404);
 });

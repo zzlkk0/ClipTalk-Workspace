@@ -135,7 +135,7 @@ with open(os.environ['CLIPTALK_INSTALL_TEST_ROOT']+'/packages.log','a') as log:
   builtin command "$@"
 }
 `);
-  const publicFiles=['server.js','db.js','workspace-store.js','sharing-store.js','quota-storage.js','package.json','package-lock.json','scripts','public','i18n','deploy.sh'];
+  const publicFiles=['server.js','db.js','workspace-store.js','sharing-store.js','quota-storage.js','drive-store.js','connection-policy.js','package.json','package-lock.json','scripts','public','i18n','deploy.sh'];
   for(const file of publicFiles)fs.cpSync(path.join(root,file),path.join(source,file),{recursive:true});
   const archive=path.join(dir,'source.tar.gz');execFileSync('tar',['-czf',archive,'-C',dir,'source']);
   const realNode=process.execPath,realCurl=execFileSync('bash',['-c','command -v curl'],{encoding:'utf8'}).trim();

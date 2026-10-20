@@ -45,14 +45,15 @@ test('browser: remove role toggle, device sync, named archives, clear, quota edi
   const archiveTitle='<img src=x onerror=window.__injected=1> 研究档案';
   await a.page.locator('#archive-title').fill(archiveTitle);
   await a.page.locator('#archive-start').fill(macauDate());await a.page.locator('#archive-end').fill(macauDate());
-  await a.page.locator('#archive-scope').selectOption('both');await a.page.locator('#archive-submit').click();
+  await a.page.locator('#archive-scope').selectOption('chat');await a.page.locator('#archive-submit').click();
   await a.page.waitForFunction(()=>document.querySelector('#archives-dialog').open);
   await waitText(a.page,'#archive-list',archiveTitle);
-  await a2.page.waitForFunction(()=>document.querySelector('#chat-messages').children.length===0&&document.querySelector('#file-list .file-item')===null);
+  await a2.page.waitForFunction(()=>document.querySelector('#chat-messages').children.length===0);
+  await waitText(a2.page,'#file-list',displayedName);
   assert.equal(await a.page.evaluate(()=>window.__injected),undefined);
   await a.page.locator('#archive-list .archive-card button').click();
   await waitText(a.page,'#archive-detail-title',archiveTitle);
-  await waitText(a.page,'#archive-messages','测试多设备对话');await waitText(a.page,'#archive-files',displayedName);
+  await waitText(a.page,'#archive-messages','测试多设备对话');await waitText(a.page,'#archive-messages',displayedName);
   assert.equal(await a.page.locator('#archive-detail-title img').count(),0);
   await a.page.locator('#archive-rename-title').fill('第一阶段归档');
   await a.page.locator('#archive-rename-form button[data-t="workspace.rename"]').click();
@@ -63,7 +64,7 @@ test('browser: remove role toggle, device sync, named archives, clear, quota edi
   await a.page.locator('#archives-dialog .dialog-header button').click();
   await a.page.locator('#panel-chat button[data-t="workspace.clear_all"]').click();
   await a2.page.waitForFunction(()=>document.querySelector('#chat-messages').children.length===0);
-  await a.page.locator('#panel-files button[data-t="workspace.clear_all"]').click();
+  await a.page.locator('#drive-select-all').click();await a.page.locator('#drive-delete').click();
   await a2.page.waitForFunction(()=>document.querySelector('#file-list .file-item')===null);
   await a.page.locator('#lang-btn').click();await waitText(a.page,'.workspace-note','Each account');
   await a.page.locator('button[data-t="workspace.archives"]').click();

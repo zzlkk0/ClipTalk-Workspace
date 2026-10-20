@@ -35,7 +35,7 @@ test('browser: custom branding, archive reader, sharing links and permissions, a
   await alice.page.locator('#panel-chat button[data-t="workspace.archive"]').click();
   await alice.page.locator('#archive-title').fill('共享项目记录');
   await alice.page.locator('#archive-start').fill(macauDate()); await alice.page.locator('#archive-end').fill(macauDate());
-  await alice.page.locator('#archive-scope').selectOption('both'); await alice.page.locator('#archive-submit').click();
+  await alice.page.locator('#archive-scope').selectOption('chat'); await alice.page.locator('#archive-submit').click();
   await alice.page.locator('#archive-list button').click(); await waitText(alice.page, '#archive-messages', '归档消息 24');
   assert.ok((await alice.page.locator('#archive-detail-dialog').boundingBox()).width > 1000);
   await alice.page.locator('#archive-search').fill('归档消息 24');

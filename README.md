@@ -8,8 +8,10 @@ Docker is optional. You can run ClipTalk directly with Node.js, use the native i
 
 - **Account isolation:** clipboard, chat, files, downloads and archives belong to the signed-in account. Other users, including administrators, can access a file only when its owner explicitly shares it.
 - **Device sync:** devices using the same account receive live updates through Socket.IO.
-- **Clear active content:** clear conversations or files after confirmation. Existing archives remain available.
-- **Named date archives:** select a start date, end date and content type. Create, rename, view, download, restore or delete an archive. Dates include both days and use `Asia/Macau` (UTC+8).
+- **Personal drive:** create nested folders, rename or move folders, upload into the current folder, move files individually or in batches, and delete files or whole folders after confirmation. Upload progress and cancellation are available. Folder names support 1–120 characters, with up to 32 levels and 1,000 folders per account; file batches support up to 100 selections.
+- **Clear conversations:** clear active conversations after confirmation. Existing conversation archives and drive files remain available.
+- **Named conversation archives:** select a start and end date. Create, rename, view, download, restore or delete an archive. Dates include both days and use `Asia/Macau` (UTC+8). Folder organization replaces file archiving.
+- **Idle connection control:** the administrator sets the page inactivity interval in system settings (default **1,800 seconds / 30 minutes**, range **5–86,400 seconds**). Idle pages disconnect from realtime sync and show **Resume connection**. Clicking it reconnects and loads current content. Settings take effect on existing connections; each device has its own inactivity timer. Receiving updates from another device does not keep an inactive page connected. This does not sign the account out or add API/upload/download timeouts.
 - **Storage quotas:** every account defaults to **1 GB = 1024 MB**. Uploaded file bytes and UTF-8 text in the clipboard, conversations and legacy clipboard archives count toward the limit. Archived files still count; attachments are counted once. Administrators can adjust each account's limit in MB. Lowering a limit preserves existing data and blocks additional storage until usage is reduced.
 - **Upload limits:** at most 10 files per request and 500 MB per file, within the account's remaining quota. Concurrent uploads from the same account share a quota.
 - **User administration:** registration, approval, disabling accounts and password management. Administrators can create another administrator account, promote an existing active user, or revoke another administrator's access. Revoked accounts become regular users immediately, retaining their ID, password, data, quota and preferences. The initial administrator and your own administrator access cannot be revoked.
@@ -25,7 +27,7 @@ Docker is optional. You can run ClipTalk directly with Node.js, use the native i
 
 Open **File sharing** in the workspace header, choose a file, and select **Selected users** or **Public**. A selected-user link requires sign-in with an allowed account. A public link allows anyone holding it to download, and signed-in users can also browse public shares in the sharing page. Paste a link from the same website into **Enter a share link** to open it.
 
-The original file continues to count toward its owner's quota. Receiving a file creates a separate copy and counts toward the recipient's quota, including simultaneous receives and uploads. Revoking a share makes its original link stop working; downloaded or received copies remain. Removing the original file after its last active or archived reference is gone also invalidates its shares. Ordinary private download URLs remain owner-only.
+The original file continues to count toward its owner's quota. Receiving a file creates a separate copy in the recipient's drive root and counts toward their quota, including simultaneous receives and uploads. Moving files or folders keeps sharing links valid. Revoking a share makes its original link stop working; downloaded or received copies remain. Deleting the original drive file also invalidates its shares. Ordinary private download URLs remain owner-only.
 
 Account deletion removes current account records and owned clipboard, messages, file bodies, archives, quotas and shares. Copies already received by other users remain theirs. Deployment backups are managed separately under the installation directory's private `backups/` folder.
 
@@ -163,9 +165,11 @@ On the first startup, the old shared conversations, files and clipboard are save
 
 ## Storage behavior
 
-- Archiving moves records out of the active workspace and keeps their storage usage.
-- Clearing files removes active file entries and their active chat attachment links. Attachments referenced by archived conversations remain available and still count toward storage.
-- Deleting an archive removes its records. File bodies are removed when no active or archived record still references them.
+- On the first drive upgrade, existing active files appear in the drive root; files in previous file archives appear in folders named after those archives. This migration runs once, keeps file bodies and original archive records, and does not change account IDs, passwords, quotas or sharing links.
+- Conversation archiving moves messages out of the active workspace and keeps their storage usage. Deleting a conversation archive removes its messages; its files remain in the drive.
+- Moving files between folders changes organization only, with no extra storage cost.
+- Deleting drive files, including files inside a deleted folder, permanently removes their bodies, attachment links in active and archived conversations, and sharing links. Message text and copies received by other accounts remain. A confirmation explains this before deletion.
+- Older clients can still use the legacy file archive/clear API. Clearing files through that API preserves attachments referenced by archived conversations. New clients use drive folders and explicit deletion.
 - Quotas measure stored file bodies and text payloads, rather than SQLite database/page overhead. Backups and the original legacy JSON are outside account quotas.
 - Administrators can see account usage and change capacity, while content access stays scoped to the owner's session.
 

@@ -1,0 +1,12 @@
+.drive-toolbar, #drive-breadcrumbs { display:flex; flex-wrap:wrap; align-items:center; gap:6px; padding:8px 12px; border-bottom:1px solid var(--border); }
+#drive-breadcrumbs { overflow-wrap:anywhere; font-size:12px; }
+#drive-breadcrumbs button { white-space:normal; text-align:left; }
+#drive-selection { font-size:11px; color:var(--dim); margin-left:auto; }
+.folder-name { flex:1; min-width:100px; text-align:left; overflow-wrap:anywhere; white-space:normal; }
+#file-list .file-item { flex-wrap:wrap; }
+#file-list input[type=checkbox] { width:16px; accent-color:var(--accent); }
+#drive-upload-progress { width:calc(100% - 24px); margin:4px 12px; }
+#idle-notice { background:var(--panel); border-bottom:1px solid var(--border); padding:8px 16px; color:var(--text); font-size:13px; }
+#idle-notice[hidden] { display:none; }
+#idle-notice button { margin-left:10px; }
+@media(max-width:600px) { .drive-toolbar { gap:5px; } #file-list .file-meta { min-width:120px; } }

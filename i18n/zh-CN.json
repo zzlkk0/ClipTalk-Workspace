@@ -92,7 +92,7 @@
     "disconnected": "断开",
     "clipboard": "剪贴板",
     "chat": "对话",
-    "files": "文件传输",
+    "files": "我的网盘",
     "clipboard_placeholder": "在这里粘贴或输入文本…\n同一账号的其他设备会实时同步",
     "copy_system": "复制到系统剪贴板",
     "clear": "清空",
@@ -111,12 +111,12 @@
     "admin_panel": "管理",
     "uploaded": "文件已上传",
     "account_note": "工作区按账号独立，同一账号的所有设备实时同步。",
-    "archives": "归档中心",
+    "archives": "对话归档",
     "archive": "归档",
     "clear_all": "清空",
     "archive_by_date": "按日期归档",
     "close": "关闭",
-    "archive_hint": "归档后从当前区移除，仍可在归档中心查看、下载和恢复。日期按澳门时间，包含起止两天。",
+    "archive_hint": "按日期归档对话，日期按澳门时间且包含起止两天。文件请在网盘中使用文件夹整理。",
     "archive_name": "归档名称",
     "start_date": "开始日期",
     "end_date": "结束日期",
@@ -143,10 +143,11 @@
     "restore_confirm": "将此归档的对话和文件恢复到当前区？现有内容会保留。旧版剪贴板保留在归档中。",
     "storage_hint": "文件、归档和文字内容合计占用空间。1 GB = 1024 MB。归档不释放容量。",
     "delete_archive": "删除归档",
-    "delete_archive_confirm": "永久删除这份归档及其中的对话和文件？无法撤销，其他当前记录和归档会保留。",
+    "delete_archive_confirm": "永久删除这份对话归档？网盘中的文件会保留。",
     "archive_deleted": "归档已删除",
     "fullscreen": "全屏 / 还原",
-    "search_archive": "搜索归档对话、发送者或附件…"
+    "search_archive": "搜索归档对话、发送者或附件…",
+    "cancel": "取消"
   },
   "errors": {
     "unauthorized": "未认证",
@@ -187,7 +188,16 @@
     "cannot_demote_self": "不能取消自己的管理员权限",
     "not_admin": "该账号已是普通用户",
     "invalid_theme": "请选择深色或白色主题",
-    "inactive_user": "请先启用或审批此用户，再设为管理员"
+    "inactive_user": "请先启用或审批此用户，再设为管理员",
+    "invalid_folder": "请选择有效文件夹",
+    "invalid_folder_name": "文件夹名需为 1–120 个字符，不能包含斜杠、控制字符或仅为点号",
+    "folder_exists": "同一位置已存在这个名称的文件夹",
+    "folder_cycle": "不能把文件夹移动到自己或自己的子文件夹中",
+    "folder_depth": "文件夹最多支持 32 层",
+    "folder_limit": "每个账号最多支持 1000 个文件夹",
+    "invalid_files": "请选中 1–100 个文件",
+    "invalid_timeout": "空闲超时需为 5–86400 秒的整数",
+    "network_error": "网络连接已断开，请重试"
   },
   "account": {
     "title": "我的账号",
@@ -244,5 +254,28 @@
     "dark": "深色主题",
     "light": "白色主题",
     "saved": "主题已保存"
+  },
+  "drive": {
+    "root": "我的网盘",
+    "new_folder": "新建文件夹",
+    "folder_name": "文件夹名称",
+    "rename": "重命名",
+    "move": "移动",
+    "delete": "删除",
+    "refresh": "刷新",
+    "select": "选择",
+    "select_all": "全选 / 取消",
+    "selected": "个文件已选",
+    "empty": "此文件夹为空，可以创建文件夹或上传文件。",
+    "destination": "目标文件夹",
+    "delete_files_confirm": "永久删除选中的文件？相关分享和对话附件也将移除。",
+    "delete_folder_confirm": "永久删除此文件夹及其全部子文件夹和文件？相关分享和附件也将移除。",
+    "deleted": "已删除",
+    "moved": "已移动",
+    "cancel_upload": "取消上传"
+  },
+  "connection": {
+    "idle": "长时间未操作，实时连接已断开。点击恢复后继续同步。",
+    "resume": "恢复连接"
   }
 }

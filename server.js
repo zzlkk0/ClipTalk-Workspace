@@ -25,12 +25,16 @@ const MAX_FILE_SIZE = 500 * 1024 * 1024;
 // ─── 数据库初始化 ───────────────────────────────
 db.init(DATA_DIR);
 const workspace = new WorkspaceStore(DATA_DIR, db.listUsers());
+const { DriveStore } = require('./drive-store');
+const drive = new DriveStore(workspace);
 const sharing = new SharingStore(workspace, db);
-const RELEASE = '20261013-adminroles';
+const RELEASE = '20261020-drive';
 
 // ── Express & HTTP ────────────────────────────
 const app = express();
 const server = http.createServer(app);
+const { ConnectionPolicy } = require('./connection-policy');
+const connectionPolicy = new ConnectionPolicy(db);
 
 // ─── Helmet ─────────────────────────────────────
 app.use(helmet({
@@ -373,10 +377,12 @@ app.get('/api/admin/settings', requireAuth, requireAdmin, (req, res) => {
     approval_mode: db.getSetting('approval_mode'),
     registration_enabled: db.getSetting('registration_enabled'),
     site_name: db.getSetting('site_name'),
+    ...connectionPolicy.settings(),
   });
 });
 
 app.post('/api/admin/settings', requireAuth, requireAdmin, (req, res) => {
+  connectionPolicy.validate(req.body);
   const { approval_mode, registration_enabled, site_name } = req.body;
   if (site_name !== undefined) {
     if (typeof site_name !== 'string' || site_name.trim().length > 80 || /[\x00-\x1f\x7f]/.test(site_name)) return res.status(400).json({ error: 'invalid_site_name' });
@@ -389,6 +395,10 @@ app.post('/api/admin/settings', requireAuth, requireAdmin, (req, res) => {
   if (registration_enabled !== undefined) {
     db.setSetting('registration_enabled', registration_enabled ? 'true' : 'false');
   }
+  for (const key of ['idle_timeout_seconds']) {
+    if (req.body[key] !== undefined) db.setSetting(key, req.body[key]);
+  }
+  connectionPolicy.refresh();
   res.json({ ok: true });
 });
 
@@ -417,10 +427,39 @@ function emitSnapshot(owner) {
   emitStorage(owner);
 }
 function emitArchives(owner) { io.to(ownerRoom(owner)).emit('archives-updated'); }
+function emitDrive(owner) { io.to(ownerRoom(owner)).emit('drive-updated'); }
+
+app.get('/api/drive', requireAuth, (req, res) => res.json(drive.list(req.session.userId, req.query.folderId)));
+app.get('/api/drive/folders', requireAuth, (req, res) => res.json(drive.folders(req.session.userId)));
+app.post('/api/drive/folders', requireAuth, (req, res) => {
+  const folder = drive.createFolder(req.session.userId, req.body);
+  emitDrive(req.session.userId); res.status(201).json(folder);
+});
+app.patch('/api/drive/folders/:id', requireAuth, (req, res) => {
+  const folder = drive.updateFolder(req.session.userId, req.params.id, req.body);
+  emitDrive(req.session.userId); res.json(folder);
+});
+app.delete('/api/drive/folders/:id', requireAuth, (req, res) => {
+  if (req.body.confirm !== true) return res.status(400).json({ error: 'confirmation_required' });
+  drive.deleteFolder(req.session.userId, req.params.id);
+  emitDrive(req.session.userId); emitSnapshot(req.session.userId); emitArchives(req.session.userId);
+  res.json({ ok: true });
+});
+app.patch('/api/drive/files', requireAuth, (req, res) => {
+  drive.moveFiles(req.session.userId, req.body.names, req.body.folderId);
+  emitDrive(req.session.userId); res.json({ ok: true });
+});
+app.delete('/api/drive/files', requireAuth, (req, res) => {
+  if (req.body.confirm !== true) return res.status(400).json({ error: 'confirmation_required' });
+  drive.deleteFiles(req.session.userId, req.body.names);
+  emitDrive(req.session.userId); emitSnapshot(req.session.userId); emitArchives(req.session.userId);
+  res.json({ ok: true });
+});
 
 app.post('/api/workspace/clear', requireAuth, (req, res) => {
   if (req.body.confirm !== true) return res.status(400).json({ error: 'confirmation_required' });
   workspace.clear(req.session.userId, req.body.scope);
+  emitDrive(req.session.userId);
   emitSnapshot(req.session.userId);
   res.json({ ok: true });
 });
@@ -466,6 +505,7 @@ const storage = new QuotaStorage(workspace);
 workspace.pendingBytes = owner => storage.pending.get(owner) || 0;
 const upload = multer({ storage, limits: { fileSize: MAX_FILE_SIZE, files: 10 } });
 app.post('/upload', requireAuth, (req, res, next) => {
+  drive.folder(req.session.userId, req.query.folderId);
   req.once('aborted', () => storage.release(req));
   upload.array('files', 10)(req, res, error => {
     storage.release(req);
@@ -481,7 +521,9 @@ app.post('/upload', requireAuth, (req, res, next) => {
       // Recheck authorization after a potentially long upload.
       const user = db.getUserById(req.session.userId);
       if (!user || user.status !== 'active') throw Object.assign(new Error('unauthorized'), { status: 401 });
-      const message = workspace.addUpload(user.id, user.username, uploaded);
+      if (req.aborted || res.destroyed) throw Object.assign(new Error('upload_aborted'), { status: 400 });
+      const message = drive.addUpload(user.id, user.username, uploaded, req.query.folderId);
+      emitDrive(user.id);
       io.to(ownerRoom(user.id)).emit('files-updated', workspace.files(user.id));
       io.to(ownerRoom(user.id)).emit('chat-message', message);
       emitStorage(user.id);
@@ -494,7 +536,8 @@ app.post('/upload', requireAuth, (req, res, next) => {
 });
 app.get('/api/files', requireAuth, (req, res) => res.json(workspace.files(req.session.userId)));
 app.delete('/api/files/:name', requireAuth, (req, res) => {
-  workspace.deleteFile(req.session.userId, req.params.name);
+  drive.deleteFiles(req.session.userId, [req.params.name]);
+  emitDrive(req.session.userId);
   emitSnapshot(req.session.userId);
   res.json({ ok: true });
 });
@@ -535,11 +578,12 @@ app.post('/api/shares/:token/import', requireAuth, async (req, res, next) => {
     await fs.promises.copyFile(path.join(UPLOADS_DIR, share.asset_name), destination, fs.constants.COPYFILE_EXCL);
     await fs.promises.chmod(destination, 0o600);
     const user = db.getUserById(owner);
-    if (req.aborted || !user || user.status !== 'active') throw Object.assign(new Error('unauthorized'), { status: 401 });
+    if (req.aborted || res.destroyed || !user || user.status !== 'active') throw Object.assign(new Error('unauthorized'), { status: 401 });
     sharing.access(req.params.token, owner); // A revoked share cannot finish an in-flight import.
     storage.release(req);
     workspace.addUpload(owner, user.username, [{ name, originalName: share.original_name, size: share.size, time: Date.now() }]);
     destination = null;
+    emitDrive(owner);
     emitSnapshot(owner);
     res.status(201).json({ ok: true });
   } catch (error) { next(error); }
@@ -554,6 +598,7 @@ app.get('/share/:token', (req, res) => res.sendFile(path.join(__dirname, 'public
 
 app.use(express.static(path.join(__dirname, 'public')));
 app.use((error, req, res, next) => {
+  if (res.destroyed) return;
   if (res.headersSent) return next(error);
   const status = error.status || (error instanceof multer.MulterError ? 400 : 500);
   const code = status === 500 ? 'server_error' : error.message;
@@ -571,6 +616,7 @@ io.use((socket, next) => {
   next(new Error('unauthorized'));
 });
 io.on('connection', socket => {
+  connectionPolicy.attach(socket);
   const owner = socket.request.session.userId;
   socket.join(ownerRoom(owner));
   socket.join('session:' + socket.request.sessionID);
@@ -587,9 +633,11 @@ io.on('connection', socket => {
         socket.disconnect(true);
         return next(new Error('unauthorized'));
       }
+      if (['user-activity', 'clipboard-update', 'chat-message', 'refresh-files'].includes(packet[0])) connectionPolicy.touch(socket);
       next();
     });
   });
+  socket.on('user-activity', () => {});
   socket.on('clipboard-update', text => {
     if (typeof text !== 'string' || text.length > 500000) return;
     try {

@@ -92,7 +92,7 @@
     "disconnected": "Disconnected",
     "clipboard": "Clipboard",
     "chat": "Chat",
-    "files": "File Transfer",
+    "files": "My drive",
     "clipboard_placeholder": "Paste or type text here…\nSyncs with your other signed-in devices",
     "copy_system": "Copy to System Clipboard",
     "clear": "Clear",
@@ -111,12 +111,12 @@
     "admin_panel": "Admin",
     "uploaded": "Files uploaded",
     "account_note": "Each account has its own workspace. All devices using the same account sync in real time.",
-    "archives": "Archives",
+    "archives": "Conversation archives",
     "archive": "Archive",
     "clear_all": "Clear all",
     "archive_by_date": "Archive by date",
     "close": "Close",
-    "archive_hint": "Archived items leave the active workspace. View, download or restore them in Archives. Dates use Macau time and include both boundary days.",
+    "archive_hint": "Archive conversations by date. Dates include both days in Macau time. Organize files in drive folders.",
     "archive_name": "Archive name",
     "start_date": "Start date",
     "end_date": "End date",
@@ -143,10 +143,11 @@
     "restore_confirm": "Restore this archive to the active workspace? Existing content will be kept. The previous shared clipboard stays in its archive.",
     "storage_hint": "Includes files, archives and text content. 1 GB = 1024 MB. Archiving does not free space.",
     "delete_archive": "Delete archive",
-    "delete_archive_confirm": "Permanently delete this archive and its contents? This cannot be undone. Other active items and archives will be kept.",
+    "delete_archive_confirm": "Permanently delete this conversation archive? Files in your drive will be kept.",
     "archive_deleted": "Archive deleted",
     "fullscreen": "Full screen / Restore",
-    "search_archive": "Search messages, senders or attachments…"
+    "search_archive": "Search messages, senders or attachments…",
+    "cancel": "Cancel"
   },
   "errors": {
     "unauthorized": "Unauthorized",
@@ -187,7 +188,16 @@
     "cannot_demote_self": "You cannot revoke your own administrator access",
     "not_admin": "This account is already a regular user",
     "invalid_theme": "Choose a dark or white theme",
-    "inactive_user": "Activate or approve this user before promoting them to administrator"
+    "inactive_user": "Activate or approve this user before promoting them to administrator",
+    "invalid_folder": "Choose a valid folder",
+    "invalid_folder_name": "Use 1–120 characters without slashes or control characters; dot-only names are not allowed",
+    "folder_exists": "A folder with this name already exists here",
+    "folder_cycle": "A folder cannot be moved into itself or its descendants",
+    "folder_depth": "Folders support at most 32 levels",
+    "folder_limit": "Each account supports at most 1000 folders",
+    "invalid_files": "Select between 1 and 100 files",
+    "invalid_timeout": "Idle timeout must be a whole number between 5 and 86400 seconds",
+    "network_error": "The network connection was lost. Please retry."
   },
   "account": {
     "title": "My account",
@@ -244,5 +254,28 @@
     "dark": "Dark theme",
     "light": "White theme",
     "saved": "Theme saved"
+  },
+  "drive": {
+    "root": "My drive",
+    "new_folder": "New folder",
+    "folder_name": "Folder name",
+    "rename": "Rename",
+    "move": "Move",
+    "delete": "Delete",
+    "refresh": "Refresh",
+    "select": "Select",
+    "select_all": "Select / clear all",
+    "selected": "files selected",
+    "empty": "This folder is empty. Create a folder or upload files.",
+    "destination": "Destination folder",
+    "delete_files_confirm": "Permanently delete the selected files? Their shares and conversation attachments will also be removed.",
+    "delete_folder_confirm": "Permanently delete this folder, all subfolders and files? Related shares and attachments will also be removed.",
+    "deleted": "Deleted",
+    "moved": "Moved",
+    "cancel_upload": "Cancel upload"
+  },
+  "connection": {
+    "idle": "Disconnected after inactivity. Resume the connection to continue syncing.",
+    "resume": "Resume connection"
   }
 }

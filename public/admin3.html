@@ -238,6 +238,8 @@ async function load(){
     h+='<div class="card">';
     h+='<div class="card-header">⚡ 系统设置</div>';
     h+='<div class="input-line"><label for="site-name">网站名称</label><input id="site-name" maxlength="80" placeholder="共享工作区（默认）"><button class="btn btn-ok" id="save-site-name" onclick="saveSiteName()">保存名称</button><span id="site-name-msg" class="toast"></span></div>';
+    h+='<form id="timeout-form" onsubmit="saveTimeouts(event)"><div class="input-line"><label for="idle-timeout">空闲断开（秒）</label><input id="idle-timeout" type="number" min="5" max="86400" step="1" required><button class="btn btn-ok" type="submit">保存超时设置</button><span id="timeout-msg" class="toast" role="status"></span></div></form>';
+    h+='<p class="storage-hint">默认空闲 1800 秒（30 分钟）后暂停实时连接，点击“恢复连接”继续使用。设置保存后立即生效。</p>';
     h+='<div class="setting-row">';
     h+='<label>审批模式</label>';
     h+='<div class="toggle-group">';
@@ -261,6 +263,7 @@ async function load(){
     h+='</div>';
     app.innerHTML=h;
     document.getElementById('site-name').value=settings.site_name||'';
+    document.getElementById('idle-timeout').value=settings.idle_timeout_seconds;
     renderStorage(storage);
   }catch(e){
     app.innerHTML='<div class="center-msg err">⚠ 加载失败: '+esc(e.message)+'</div>';
@@ -274,6 +277,17 @@ async function saveSiteName(){
     if(!response.ok)throw new Error('网站名称最多80个字符，不能包含控制字符');
     ClipTalkUI.updateSite({siteName:site_name});message.textContent='已保存';message.style.color='var(--green)';
   }catch(error){message.textContent=error.message;message.style.color='var(--red)';}
+}
+async function saveTimeouts(event){
+  event.preventDefault();const button=event.target.querySelector('button'),message=document.getElementById('timeout-msg');
+  button.disabled=true;
+  try{
+    await ClipTalkUI.api('/api/admin/settings',ClipTalkUI.json('POST',{
+      idle_timeout_seconds:Number(document.getElementById('idle-timeout').value)
+    }));
+    message.textContent='✓ 已保存，立即生效';message.className='toast ok';
+  }catch(error){message.textContent=ClipTalkUI.error(error.message);message.className='toast err'}
+  finally{button.disabled=false}
 }
 
 function formatBytes(bytes){return ClipTalkUI.size(bytes)}

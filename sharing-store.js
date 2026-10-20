@@ -78,6 +78,8 @@ class SharingStore {
   }
 
   availableFiles(owner) {
+    if (this.workspace.drive) return this.db.prepare(`SELECT a.* FROM assets a JOIN drive_files d ON d.name = a.name
+      WHERE d.owner_id = ? ORDER BY a.time DESC, a.name`).all(owner).map(row => this.workspace.fileInfo(row));
     return this.db.prepare(`SELECT a.* FROM assets a WHERE a.owner_id = ? AND
       (EXISTS(SELECT 1 FROM files f WHERE f.name = a.name) OR EXISTS(SELECT 1 FROM message_assets ma WHERE ma.asset_name = a.name))
       ORDER BY a.time DESC`).all(owner).map(row => this.workspace.fileInfo(row));
