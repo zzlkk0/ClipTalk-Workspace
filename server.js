@@ -23,12 +23,14 @@ const I18N_DIR = path.join(__dirname, 'i18n');
 const MAX_FILE_SIZE = 500 * 1024 * 1024;
 
 // ─── 数据库初始化 ───────────────────────────────
-db.init(DATA_DIR);
+const accountsDatabase = db.init(DATA_DIR);
+const { AgentStore, SCOPES } = require('./agent-store');
+const agentKeys = new AgentStore(accountsDatabase, db);
 const workspace = new WorkspaceStore(DATA_DIR, db.listUsers());
 const { DriveStore } = require('./drive-store');
 const drive = new DriveStore(workspace);
 const sharing = new SharingStore(workspace, db);
-const RELEASE = '20261020-drive';
+const RELEASE = '20261025-agent';
 
 // ── Express & HTTP ────────────────────────────
 const app = express();
@@ -88,6 +90,7 @@ const globalLimiter = rateLimit({
   max: config.rateLimitMax || 100,
   standardHeaders: true, legacyHeaders: false,
   message: { error: 'too_many_requests' },
+  skip: req => req.path.startsWith('/api/v1/'),
 });
 const loginLimiter = rateLimit({
   windowMs: (config.loginWindowMinutes || 15) * 60 * 1000,
@@ -265,6 +268,18 @@ app.delete('/api/account', requireAuth, async (req, res, next) => {
     req.session.destroy(() => { res.clearCookie('connect.sid'); res.json({ ok: true }); });
   } catch (error) { next(error); }
 });
+
+// API keys are managed only by a signed-in person, never by another key.
+app.get('/api/agent-keys', requireAuth, (req, res) => res.json({ keys: agentKeys.list(req.session.userId), scopes: SCOPES }));
+app.post('/api/agent-keys', requireAuth, loginLimiter, (req, res) => {
+  const user = db.getUserById(req.session.userId);
+  if (typeof req.body.currentPassword !== 'string' || !db.verifyUser(user.username, req.body.currentPassword)) return res.status(401).json({ error: 'wrong_password' });
+  res.status(201).json(agentKeys.create(user.id, req.body));
+});
+app.delete('/api/agent-keys/:id', requireAuth, (req, res) => {
+  agentKeys.revoke(req.session.userId, req.params.id); res.json({ ok: true });
+});
+app.get('/api/agent-audit', requireAuth, (req, res) => res.json(agentKeys.history(req.session.userId, req.query.before)));
 
 // ─── 注册 API ───────────────────────────────────
 app.post('/api/register', (req, res) => {
@@ -504,8 +519,9 @@ app.get('/uploads/:name', requireAuth, (req, res, next) => {
 const storage = new QuotaStorage(workspace);
 workspace.pendingBytes = owner => storage.pending.get(owner) || 0;
 const upload = multer({ storage, limits: { fileSize: MAX_FILE_SIZE, files: 10 } });
-app.post('/upload', requireAuth, (req, res, next) => {
-  drive.folder(req.session.userId, req.query.folderId);
+function handleUpload(req, res, next) {
+  const owner = req.agent?.owner_id || req.session.userId;
+  drive.folder(owner, req.query.folderId);
   req.once('aborted', () => storage.release(req));
   upload.array('files', 10)(req, res, error => {
     storage.release(req);
@@ -519,10 +535,12 @@ app.post('/upload', requireAuth, (req, res, next) => {
     }));
     try {
       // Recheck authorization after a potentially long upload.
-      const user = db.getUserById(req.session.userId);
+      if (req.agent) agentKeys.authorizeId(req.agent.id, 'files:upload');
+      const user = db.getUserById(owner);
       if (!user || user.status !== 'active') throw Object.assign(new Error('unauthorized'), { status: 401 });
       if (req.aborted || res.destroyed) throw Object.assign(new Error('upload_aborted'), { status: 400 });
       const message = drive.addUpload(user.id, user.username, uploaded, req.query.folderId);
+      if (req.agent) req.agentTarget = uploaded.map(file => file.originalName).join(', ');
       emitDrive(user.id);
       io.to(ownerRoom(user.id)).emit('files-updated', workspace.files(user.id));
       io.to(ownerRoom(user.id)).emit('chat-message', message);
@@ -533,7 +551,12 @@ app.post('/upload', requireAuth, (req, res, next) => {
       next(failure);
     }
   });
-});
+}
+app.post('/upload', requireAuth, handleUpload);
+const { createAgentRouter } = require('./agent-api');
+app.use('/api/v1', createAgentRouter({ keys: agentKeys, accounts: db, workspace, drive, handleUpload, emitDrive, emitSnapshot, emitArchives,
+  emitClipboard: (owner, text) => { io.to(ownerRoom(owner)).emit('clipboard-update', text); emitStorage(owner); },
+}));
 app.get('/api/files', requireAuth, (req, res) => res.json(workspace.files(req.session.userId)));
 app.delete('/api/files/:name', requireAuth, (req, res) => {
   drive.deleteFiles(req.session.userId, [req.params.name]);

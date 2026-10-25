@@ -166,7 +166,13 @@ function deleteUser(id) {
 
 function changePassword(id, newPassword) {
   const hash = bcrypt.hashSync(newPassword, 12);
-  return db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(hash, id);
+  return db.transaction(() => {
+    const changed = db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(hash, id);
+    if (db.prepare("SELECT 1 FROM sqlite_master WHERE name = 'agent_keys'").get()) {
+      db.prepare('UPDATE agent_keys SET revoked_at = COALESCE(revoked_at, ?) WHERE owner_id = ?').run(Date.now(), id);
+    }
+    return changed;
+  })();
 }
 
 function updateAccount(id, username, password) {

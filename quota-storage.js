@@ -11,7 +11,7 @@ class QuotaStorage {
   constructor(workspace) { this.workspace = workspace; this.pending = new Map(); }
 
   reserve(req, bytes) {
-    const reservation = req.clipTalkReservation ||= { owner: req.session.userId, bytes: 0, released: false };
+    const reservation = req.clipTalkReservation ||= { owner: req.agent?.owner_id || req.session.userId, bytes: 0, released: false };
     if (reservation.released || req.aborted) throw Object.assign(new Error('upload_aborted'), { status: 400 });
     const pending = this.pending.get(reservation.owner) || 0;
     const { usedBytes, quotaBytes } = this.workspace.storage(reservation.owner);

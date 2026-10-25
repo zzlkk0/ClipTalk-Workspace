@@ -7,6 +7,7 @@ Docker is optional. You can run ClipTalk directly with Node.js, use the native i
 ## Features
 
 - **Account isolation:** clipboard, chat, files, downloads and archives belong to the signed-in account. Other users, including administrators, can access a file only when its owner explicitly shares it.
+- **Agent access:** create per-assistant API keys with expiry, revocation and separate clipboard/file permissions in **My account → Agent access**. Use the versioned HTTP API, bundled CLI, or local MCP adapter through HTTPS or an SSH tunnel. Keys survive upgrades; password changes revoke them. Calls are rate-limited and recorded without content or key secrets. See the [Agent setup and API guide](docs/AGENTS_API.md).
 - **Device sync:** devices using the same account receive live updates through Socket.IO.
 - **Personal drive:** create nested folders, rename or move folders, upload into the current folder, move files individually or in batches, and delete files or whole folders after confirmation. Upload progress and cancellation are available. Folder names support 1–120 characters, with up to 32 levels and 1,000 folders per account; file batches support up to 100 selections.
 - **Clear conversations:** clear active conversations after confirmation. Existing conversation archives and drive files remain available.

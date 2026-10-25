@@ -35,10 +35,15 @@ async function startFixture(t, { legacy = true, builtinAdmin = false } = {}) {
   const port = reservation.address().port;
   await new Promise(resolve => reservation.close(resolve));
   fs.writeFileSync(path.join(dir, 'config.json'), JSON.stringify({port,sessionSecret:crypto.randomBytes(32).toString('hex'),rateLimitMax:5000,maxLoginAttempts:100}));
-  const child = spawn(process.execPath, [path.join(__dirname, '..', 'server.js')], {
+  let logs = '';
+  function launch() {
+    const child = spawn(process.execPath, [path.join(__dirname, '..', 'server.js')], {
     cwd:path.join(__dirname,'..'), env:{...process.env,CLIPTALK_DATA_DIR:dir,CLIPTALK_HOST:'127.0.0.1'}, stdio:['ignore','pipe','pipe'],
-  });
-  let logs = ''; child.stdout.on('data', data => { logs += data; }); child.stderr.on('data', data => { logs += data; });
+    });
+    child.stdout.on('data', data => { logs += data; }); child.stderr.on('data', data => { logs += data; });
+    return child;
+  }
+  let child = launch();
   const base = 'http://127.0.0.1:' + port;
   t.after(async () => {
     if (child.exitCode === null) {
@@ -47,11 +52,16 @@ async function startFixture(t, { legacy = true, builtinAdmin = false } = {}) {
     }
     fs.rmSync(dir,{recursive:true,force:true});
   });
-  for (let attempt = 0; attempt < 100; attempt++) {
+  async function ready() { for (let attempt = 0; attempt < 100; attempt++) {
     if (child.exitCode !== null) throw new Error('Fixture exited: ' + logs);
     try { const resp = await fetch(base+'/api/health'); if (resp.ok) break; } catch {}
     if (attempt === 99) throw new Error('Fixture startup timeout: ' + logs);
     await new Promise(resolve => setTimeout(resolve,50));
+  } }
+  await ready();
+  async function restart() {
+    const stopped = new Promise(resolve => child.once('exit', resolve));
+    child.kill('SIGTERM'); await stopped; logs = ''; child = launch(); await ready();
   }
   async function request(url, cookie, options = {}) {
     const response = await fetch(base+url, {...options,headers:{...options.headers,...(cookie?{Cookie:cookie}:{})}});
@@ -63,7 +73,7 @@ async function startFixture(t, { legacy = true, builtinAdmin = false } = {}) {
     if (result.status !== 200) throw new Error('Fixture login failed');
     return result.response.headers.getSetCookie()[0].split(';')[0];
   }
-  return {base,dir,password,request,login,child};
+  return {base,dir,password,request,login,restart,get child() { return child; }};
 }
 function json(method,body) {return {method,headers:{'Content-Type':'application/json'},body:JSON.stringify(body)};}
 function macauDate() { return new Date(Date.now()+8*60*60*1000).toISOString().slice(0,10); }

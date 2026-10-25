@@ -9,6 +9,7 @@
 <label for="account-confirm-password" data-t="register.confirm_password">确认新密码</label><input id="account-confirm-password" type="password" autocomplete="new-password">
 <div class="actions"><button class="primary" type="submit" data-t="admin.btn_save">保存</button></div></form></section>
 <section class="card"><h2 data-t="preferences.title">主题设置</h2><p class="muted" data-t="preferences.hint">主题按账号保存，同一账号在不同设备登录后会沿用。</p><label for="theme-select" data-t="preferences.theme">界面主题</label><select id="theme-select" data-theme-select><option value="dark" data-t="preferences.dark">深色主题</option><option value="light" data-t="preferences.light">白色主题</option></select></section>
+<section class="card"><h2 data-t="agents.title">Agent 接入</h2><p data-t="agents.hint"></p><a class="button" id="agent-access-link" href="/agents.html" data-t="agents.manage">管理密钥与接入</a></section>
 <section class="card"><h2 class="danger" data-t="account.delete">删除本账号</h2><p data-t="account.delete_hint">永久删除本账号的剪贴板、对话、文件、归档和分享，并退出所有设备。已经接收的文件副本仍属于接收者。</p><p id="last-admin-hint" class="hint" hidden></p>
 <form id="delete-account-form"><label for="delete-username" data-t="account.type_username">输入当前用户名确认</label><input id="delete-username" required autocomplete="off"><label for="delete-password" data-t="account.current_password">当前密码</label><input id="delete-password" type="password" required autocomplete="current-password"><div class="actions"><button class="danger" type="submit" data-t="account.delete">删除本账号</button></div></form></section>
 </main></body></html>
