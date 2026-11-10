@@ -838,7 +838,12 @@ class ProjectStore {
       ON CONFLICT(key_id, idem_key) DO UPDATE SET request_hash = excluded.request_hash, status = excluded.status, response = excluded.response, created_at = excluded.created_at`)
       .run(keyId, idemKey, owner, hash, status, JSON.stringify(body), now);
   }
-  static requestHash(method, path, body) { return createHash('sha256').update(method + ' ' + path + '\n' + JSON.stringify(body ?? null)).digest('hex'); }
+  // Key order does not matter, so different clients sending the same content match.
+  static requestHash(method, path, body) {
+    const canonical = value => Array.isArray(value) ? '[' + value.map(canonical).join(',') + ']'
+      : isObject(value) ? '{' + Object.keys(value).sort().map(key => JSON.stringify(key) + ':' + canonical(value[key])).join(',') + '}' : JSON.stringify(value ?? null);
+    return createHash('sha256').update(method + ' ' + path + '\n' + canonical(body)).digest('hex');
+  }
 }
 
 module.exports = { ProjectStore, LIMITS, MESSAGE_TYPES, RESULT_STATUS, TASK_STATUS, TOPOLOGY_KINDS, EDGE_KINDS };

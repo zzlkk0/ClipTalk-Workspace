@@ -3,6 +3,7 @@
 const fs = require('node:fs');
 const { parseArgs } = require('node:util');
 const { ClipTalkClient } = require('../agent/client');
+const { runProject, PROJECT_HELP, PROJECT_OPTIONS } = require('../agent/project-cli');
 const help = `ClipTalk agent CLI (Node.js 22+)
 Set CLIPTALK_URL and CLIPTALK_TOKEN_FILE (or CLIPTALK_TOKEN).
   cliptalk me
@@ -21,17 +22,19 @@ Set CLIPTALK_URL and CLIPTALK_TOKEN_FILE (or CLIPTALK_TOKEN).
   cliptalk delete FILE_ID... --confirm
 Files use IDs returned by list/upload. All output is JSON.
 HTTPS is required for remote hosts; localhost HTTP supports SSH tunnels.
-`;
+
+` + PROJECT_HELP;
 async function main() {
   const { positionals: p, values: v } = parseArgs({ allowPositionals: true, options: {
     help: { type: 'boolean', short: 'h' }, folder: { type: 'string' }, parent: { type: 'string' },
-    text: { type: 'string' }, file: { type: 'string' }, stdin: { type: 'boolean' }, confirm: { type: 'boolean' },
+    text: { type: 'string' }, file: { type: 'string' }, stdin: { type: 'boolean' }, confirm: { type: 'boolean' }, ...PROJECT_OPTIONS,
   } });
   if (v.help || !p.length) { process.stdout.write(help); return; }
   const client = new ClipTalkClient(); let result;
   const count = n => { if (p.length !== n) throw new Error('Wrong number of arguments. Use --help.'); };
   const confirm = () => { if (!v.confirm) throw new Error('Deletion requires --confirm.'); };
   switch (p[0]) {
+    case 'project': result = await runProject(client, p.slice(1), v); break;
     case 'me': count(1); result = await client.json('/me'); break;
     case 'storage': count(1); result = await client.json('/storage'); break;
     case 'clipboard':
@@ -57,4 +60,4 @@ async function main() {
   }
   process.stdout.write(JSON.stringify(result, null, 2) + '\n');
 }
-main().catch(error => { process.stderr.write(JSON.stringify({ error: error.message, status: error.status, retryAfter: error.retryAfter }) + '\n'); process.exitCode = 1; });
+main().catch(error => { process.stderr.write(JSON.stringify({ error: error.message, status: error.status, retryAfter: error.retryAfter, detail: error.detail }) + '\n'); process.exitCode = 1; });

@@ -20,12 +20,12 @@ class ClipTalkClient {
     });
     if (!response.ok) {
       const result = await response.json().catch(() => ({}));
-      throw Object.assign(new Error(typeof result.error === 'string' ? result.error : 'HTTP ' + response.status), { status: response.status, retryAfter: response.headers.get('retry-after') });
+      throw Object.assign(new Error(typeof result.error === 'string' ? result.error : 'HTTP ' + response.status), { status: response.status, retryAfter: response.headers.get('retry-after'), detail: result.detail });
     }
     return response;
   }
-  async json(endpoint, method = 'GET', body) {
-    return (await this.request(endpoint, { method, ...(body === undefined ? {} : { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }) })).json();
+  async json(endpoint, method = 'GET', body, headers = {}) {
+    return (await this.request(endpoint, { method, headers: { ...headers, ...(body === undefined ? {} : { 'Content-Type': 'application/json' }) }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) })).json();
   }
   localPath(filename, writing = false, restricted = false) {
     if (typeof filename !== 'string' || !filename || filename.includes('\0')) throw new Error('Invalid local file path.');
