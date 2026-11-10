@@ -17,3 +17,4 @@ data/
 .runtime/
 validation/
 .env
+project-content-rules.json

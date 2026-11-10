@@ -1,0 +1,28 @@
+<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>项目协同</title>
+<link rel="stylesheet" href="/theme.css"><script src="/theme.js"></script><link rel="stylesheet" href="/pages.css"><link rel="stylesheet" href="/project.css">
+<script src="/ui.js" defer></script><script src="/task-table.js" defer></script><script src="/socket.io/socket.io.js" defer></script><script src="/project.js" defer></script></head><body>
+<header><a class="brand" href="/">⚡ <span data-site-name>共享工作区</span></a><a href="/" data-t="project.back">返回工作区</a><a href="/agents.html" data-t="agents.title">Agent 接入</a><button class="theme-toggle" data-theme-toggle hidden></button><button id="language-button">中文 / EN</button></header>
+<main class="project-main">
+  <div class="project-head">
+    <h1 data-t="project.title">项目协同</h1>
+    <div class="project-picker"><label for="project-select" class="sr-only" data-t="project.project">项目</label><select id="project-select"></select><button id="project-new" type="button" data-t="project.new_project">新建项目</button><span id="live-state" class="live" data-t="project.offline">未连接</span></div>
+  </div>
+  <p id="page-notice" class="notice" role="status" hidden></p>
+  <section id="empty-state" class="card" hidden><h2 data-t="project.empty_title">还没有项目</h2><p class="muted" data-t="project.empty_hint"></p></section>
+  <nav id="project-tabs" class="project-tabs" role="tablist" hidden>
+    <button role="tab" data-tab="overview" data-t="project.tab_overview">总览</button>
+    <button role="tab" data-tab="tasks" data-t="project.tab_tasks">任务</button>
+    <button role="tab" data-tab="messages" data-t="project.tab_messages">对话</button>
+    <button role="tab" data-tab="decisions" data-t="project.tab_decisions">待决事项</button>
+    <button role="tab" data-tab="circuits" data-t="project.tab_circuits">电路</button>
+    <button role="tab" data-tab="texts" data-t="project.tab_texts">记忆与文档</button>
+    <button role="tab" data-tab="handoffs" data-t="project.tab_handoffs">交付</button>
+  </nav>
+  <div id="project-view"></div>
+</main>
+<dialog id="new-project-dialog"><form id="new-project-form" method="dialog"><h2 data-t="project.new_project">新建项目</h2>
+  <label for="new-project-id" data-t="project.project_id">项目 ID</label><input id="new-project-id" required pattern="[a-z0-9][a-z0-9_\-]{0,63}" autocomplete="off" placeholder="fyp">
+  <p class="hint" data-t="project.project_id_hint"></p>
+  <label for="new-project-name" data-t="project.project_name">名称</label><input id="new-project-name" maxlength="120" autocomplete="off">
+  <div class="actions"><button type="button" id="new-project-cancel" data-t="workspace.cancel">取消</button><button type="submit" class="primary" data-t="project.create">创建</button></div></form></dialog>
+</body></html>

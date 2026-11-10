@@ -11,7 +11,7 @@
     for (const key of data.keys) {
       const row = document.createElement('div'); row.className = 'key-row'; row.dataset.keyId = key.id;
       const state = key.revoked_at ? 'revoked' : key.expires_at <= Date.now() ? 'expired' : 'active';
-      row.append(text('h3', key.label), text('p', key.prefix + '… · ' + ui.t('agents.' + state)), text('p', key.scopes.map(scopeLabel).join(' · '), 'muted'),
+      row.append(text('h3', key.label), text('p', key.prefix + '… · ' + ui.t('agents.' + state) + ' · ' + (key.actor ? 'actor ' + key.actor : ui.t('agents.actor_none'))), text('p', key.scopes.map(scopeLabel).join(' · '), 'muted'),
         text('p', ui.t('agents.expires_at') + ': ' + date(key.expires_at) + ' · ' + ui.t('agents.last_used') + ': ' + date(key.last_used_at), 'hint'));
       if (state === 'active') {
         const revoke = text('button', ui.t('agents.revoke'), 'danger'); revoke.type = 'button';
@@ -27,7 +27,8 @@
     if (!data.keys.length) list.append(text('p', ui.t('agents.no_keys'), 'muted'));
     if (!el('key-scopes').children.length) for (const scope of data.scopes) {
       const label = document.createElement('label'), input = document.createElement('input'); input.type = 'checkbox'; input.name = 'scope'; input.value = scope;
-      input.checked = scope.endsWith(':read'); label.append(input, document.createTextNode(scopeLabel(scope))); el('key-scopes').append(label);
+      // Project scopes are opt-in, like every write permission.
+      input.checked = scope.endsWith(':read') && !scope.startsWith('project:'); label.append(input, document.createTextNode(scopeLabel(scope))); el('key-scopes').append(label);
     }
   }
   async function audit(more = false) {
@@ -56,11 +57,11 @@
       event.preventDefault(); const button = event.target.querySelector('button'); button.disabled = true;
       el('new-token').value = ''; el('created-key').hidden = true;
       try {
-        const result = await ui.api('/api/agent-keys', ui.json('POST', { label: el('key-label').value, expiresInDays: Number(el('key-days').value),
+        const result = await ui.api('/api/agent-keys', ui.json('POST', { label: el('key-label').value, expiresInDays: Number(el('key-days').value), actor: el('key-actor').value.trim() || undefined,
           scopes: [...document.querySelectorAll('[name=scope]:checked')].map(node => node.value), currentPassword: el('key-password').value }));
         el('new-token').value = result.token; el('created-key').hidden = false; await keys();
       } catch (error) { ui.notice(ui.error(error.message), true); }
-      finally { el('key-password').value = ''; button.disabled = false; }
+      finally { el('key-password').value = ''; el('key-actor').value = ''; button.disabled = false; }
     };
     el('hide-token').onclick = () => { el('new-token').value = ''; el('created-key').hidden = true; };
     el('copy-token').onclick = async () => {
