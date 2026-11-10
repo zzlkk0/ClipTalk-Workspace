@@ -8,6 +8,8 @@ Docker is optional. You can run ClipTalk directly with Node.js, use the native i
 
 - **Account isolation:** clipboard, chat, files, downloads and archives belong to the signed-in account. Other users, including administrators, can access a file only when its owner explicitly shares it.
 - **Agent access:** create per-assistant API keys with expiry, revocation and separate clipboard/file permissions in **My account → Agent access**. Use the versioned HTTP API, bundled CLI, or local MCP adapter through HTTPS or an SSH tunnel. Keys survive upgrades; password changes revoke them. Calls are rate-limited and recorded without content or key secrets. See the [Agent setup and API guide](docs/AGENTS_API.md).
+- **Project collaboration:** a project page (header button **Projects**) where two AI agents — for example one on a lab EDA server (actor `SERVER`) and one on a PC (actor `PC`) — share status, tasks, threaded messages, handoff records, decisions for you to answer, shared memory, document copies, circuit topologies and simulation results, updated live. Each key gets an immutable actor; agents can only change their own entries, and switches, protected documents, answers and deletion are browser-only. Uploads are checked for process-model, library and PDK content. Includes a Python 3.6 standard-library client for older servers and a connectivity check. See [Project collaboration](docs/AGENTS_API.md#7-project-collaboration).
+  **项目协同：** 两个 AI agent（如学校 EDA 服务器上的 `SERVER` 与电脑上的 `PC`）在项目页同步状态、任务、对话、交付、待你决定的事项、共享记忆、文档副本、电路拓扑与仿真结果，网页实时刷新。每把密钥绑定不可修改的 actor，只能改本方内容；开关、受保护文档、答复与删除只能在网页上操作；上传内容会拦截工艺模型、库文件与 PDK 路径。附带只依赖 Python 3.6 标准库的客户端和连通性检查。
 - **Device sync:** devices using the same account receive live updates through Socket.IO.
 - **Personal drive:** create nested folders, rename or move folders, upload into the current folder, move files individually or in batches, and delete files or whole folders after confirmation. Upload progress and cancellation are available. Folder names support 1–120 characters, with up to 32 levels and 1,000 folders per account; file batches support up to 100 selections.
 - **Clear conversations:** clear active conversations after confirmation. Existing conversation archives and drive files remain available.
@@ -179,11 +181,13 @@ On the first startup, the old shared conversations, files and clipboard are save
 No production accounts or data are used by tests. Tests create their own temporary databases and HTTP services on random loopback ports.
 
 Installer tests simulate Ubuntu/Debian and Alibaba Cloud Linux 3 with both dnf and yum. They mock host package and service commands while starting real temporary Node.js servers to verify installation, persistent updates, and rollback.
+Project tests cover permissions by actor, version conflicts, idempotent retries, append-only records, content blocking, validation, long-polling events, cross-account isolation, upgrades of older databases, and the CLI, MCP and Python clients (skipped when `python3` is missing).
 Native migration tests verify account and file preservation, backups, rollback, and refusal to copy active or invalid data. The helper requires Python 3.6 or newer, using only the standard library.
 
 ```bash
 npm ci
 node --test test/workspace-store.test.js
+npm test   # all tests; same as node --test test/*.test.js
 
 # Additional API, browser and installer tests:
 npm install --no-save --package-lock=false socket.io-client playwright

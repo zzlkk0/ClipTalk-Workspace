@@ -6,7 +6,8 @@
   "scripts": {
     "start": "node server.js",
     "agent:cli": "node scripts/cliptalk.js",
-    "agent:mcp": "node scripts/cliptalk-mcp.js"
+    "agent:mcp": "node scripts/cliptalk-mcp.js",
+    "test": "node --test test/*.test.js"
   },
   "dependencies": {
     "@modelcontextprotocol/server": "2.4.0",
