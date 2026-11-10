@@ -1,6 +1,9 @@
 'use strict';
 const { randomBytes, randomUUID, createHash } = require('node:crypto');
-const SCOPES = ['clipboard:read', 'clipboard:write', 'files:read', 'files:upload', 'files:manage', 'files:delete'];
+const SCOPES = ['clipboard:read', 'clipboard:write', 'files:read', 'files:upload', 'files:manage', 'files:delete', 'project:read', 'project:write', 'project:circuits'];
+// Agent identity for project collaboration. USER and ALL are reserved for the browser and broadcasts.
+const ACTOR = /^[A-Z0-9_]{1,32}$/;
+const RESERVED_ACTORS = ['USER', 'ALL'];
 const fail = (code, status = 400) => { throw Object.assign(new Error(code), { status }); };
 
 class AgentStore {
@@ -24,6 +27,8 @@ class AgentStore {
       );
       CREATE INDEX IF NOT EXISTS agent_audit_owner ON agent_audit(owner_id, id);
     `);
+    // Older keys have no actor: they can read projects but never write to them.
+    if (!this.db.pragma('table_info(agent_keys)').some(column => column.name === 'actor')) this.db.exec('ALTER TABLE agent_keys ADD COLUMN actor TEXT');
   }
   publicKey(row) {
     const { token_hash, window_start, window_count, scopes, ...safe } = row;
@@ -32,6 +37,8 @@ class AgentStore {
   list(owner) { return this.db.prepare('SELECT * FROM agent_keys WHERE owner_id = ? ORDER BY (revoked_at IS NULL AND expires_at > ?) DESC, created_at DESC LIMIT 100').all(owner, Date.now()).map(row => this.publicKey(row)); }
   create(owner, input) {
     const { label, scopes, expiresInDays = 30 } = input;
+    const actor = input.actor === undefined || input.actor === null || input.actor === '' ? null : input.actor;
+    if (actor !== null && (typeof actor !== 'string' || !ACTOR.test(actor) || RESERVED_ACTORS.includes(actor))) fail('invalid_key_actor');
     if (typeof label !== 'string' || !label.trim() || label.trim().length > 80 || /[\x00-\x1f\x7f]/.test(label)) fail('invalid_key_label');
     if (!Array.isArray(scopes) || !scopes.length || scopes.length > SCOPES.length || scopes.some(scope => !SCOPES.includes(scope))) fail('invalid_key_scopes');
     if (!Number.isInteger(expiresInDays) || expiresInDays < 1 || expiresInDays > 365) fail('invalid_key_expiry');
@@ -39,8 +46,8 @@ class AgentStore {
       const now = Date.now();
       if (this.db.prepare('SELECT COUNT(*) n FROM agent_keys WHERE owner_id = ? AND revoked_at IS NULL AND expires_at > ?').get(owner, now).n >= 20) fail('agent_key_limit');
       const token = 'ct_' + randomBytes(32).toString('base64url'), id = randomUUID();
-      this.db.prepare(`INSERT INTO agent_keys(id,owner_id,label,token_hash,prefix,scopes,created_at,expires_at)
-        VALUES(?,?,?,?,?,?,?,?)`).run(id, owner, label.trim(), createHash('sha256').update(token).digest('hex'), token.slice(0, 11), JSON.stringify([...new Set(scopes)]), now, now + expiresInDays * 86400000);
+      this.db.prepare(`INSERT INTO agent_keys(id,owner_id,label,token_hash,prefix,scopes,created_at,expires_at,actor)
+        VALUES(?,?,?,?,?,?,?,?,?)`).run(id, owner, label.trim(), createHash('sha256').update(token).digest('hex'), token.slice(0, 11), JSON.stringify([...new Set(scopes)]), now, now + expiresInDays * 86400000, actor);
       return { ...this.publicKey(this.db.prepare('SELECT * FROM agent_keys WHERE id = ?').get(id)), token };
     })();
   }
@@ -89,4 +96,4 @@ class AgentStore {
     return { entries: rows, nextCursor: rows.length === 50 ? rows[49].id : null };
   }
 }
-module.exports = { AgentStore, SCOPES };
+module.exports = { AgentStore, SCOPES, ACTOR, RESERVED_ACTORS };

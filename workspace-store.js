@@ -158,7 +158,8 @@ class WorkspaceStore {
     const clipboardBytes = this.db.prepare('SELECT COALESCE(SUM(length(CAST(clipboard_text AS BLOB))), 0) AS n FROM workspaces WHERE owner_id = ?').get(owner).n;
     const legacyBytes = this.db.prepare('SELECT COALESCE(SUM(length(CAST(clipboard_text AS BLOB))), 0) AS n FROM archives WHERE owner_id = ?').get(owner).n;
     const quotaBytes = this.db.prepare('SELECT limit_bytes FROM quotas WHERE owner_id = ?').get(owner)?.limit_bytes ?? DEFAULT_QUOTA;
-    const textBytes = messageBytes + clipboardBytes + legacyBytes;
+    // Optional modules (project collaboration) add their stored text here.
+    const textBytes = messageBytes + clipboardBytes + legacyBytes + (this.extraTextBytes?.(owner) || 0);
     return { usedBytes: fileBytes + textBytes, quotaBytes, fileBytes, textBytes, availableBytes: Math.max(0, quotaBytes - fileBytes - textBytes) };
   }
 
@@ -352,6 +353,7 @@ class WorkspaceStore {
       if (this.drive) this.db.prepare('DELETE FROM drive_folders WHERE owner_id = ?').run(owner);
       this.db.prepare('DELETE FROM workspaces WHERE owner_id = ?').run(owner);
       this.db.prepare('DELETE FROM quotas WHERE owner_id = ?').run(owner);
+      for (const cleanup of this.accountCleanup || []) cleanup(owner);
       this.db.prepare('DELETE FROM accounts.users WHERE id = ?').run(owner);
       return names;
     })();

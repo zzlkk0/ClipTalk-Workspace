@@ -30,7 +30,14 @@ const workspace = new WorkspaceStore(DATA_DIR, db.listUsers());
 const { DriveStore } = require('./drive-store');
 const drive = new DriveStore(workspace);
 const sharing = new SharingStore(workspace, db);
-const RELEASE = '20261025-agent';
+const { ProjectStore } = require('./project-store');
+const { ContentGuard } = require('./content-guard');
+const projects = new ProjectStore(workspace, {
+  guard: new ContentGuard(DATA_DIR),
+  // Only the change type and id are pushed; pages fetch the content themselves.
+  onEvent: (owner, payload) => io.to(ownerRoom(owner)).emit('project-updated', payload),
+});
+const RELEASE = '20261111-projects';
 
 // ── Express & HTTP ────────────────────────────
 const app = express();
@@ -420,7 +427,7 @@ app.post('/api/admin/settings', requireAuth, requireAdmin, (req, res) => {
 app.get('/api/site', (req, res) => res.json({ siteName: db.getSetting('site_name') || '' }));
 
 // Every workspace API derives the owner from the authenticated session.
-app.get('/api/health', (req, res) => res.json({ ok: true, release: RELEASE }));
+app.get('/api/health', (req, res) => res.json({ ok: true, release: RELEASE, features: ['projects'] }));
 app.get('/api/storage', requireAuth, (req, res) => res.json(workspace.storage(req.session.userId)));
 app.get('/api/admin/storage', requireAuth, requireAdmin, (req, res) => {
   res.json(db.listUsers().map(user => ({ id: user.id, username: user.username, ...workspace.storage(user.id) })));
@@ -554,9 +561,18 @@ function handleUpload(req, res, next) {
 }
 app.post('/upload', requireAuth, handleUpload);
 const { createAgentRouter } = require('./agent-api');
+const { createProjectRouter } = require('./project-api');
 app.use('/api/v1', createAgentRouter({ keys: agentKeys, accounts: db, workspace, drive, handleUpload, emitDrive, emitSnapshot, emitArchives,
+  projectRouter: createProjectRouter({ projects, keys: agentKeys }),
   emitClipboard: (owner, text) => { io.to(ownerRoom(owner)).emit('clipboard-update', text); emitStorage(owner); },
 }));
+// Browser access to project collaboration acts as USER for the signed-in account.
+function requireSessionApi(req, res, next) {
+  const user = req.session?.userId && db.getUserById(req.session.userId);
+  if (user && user.status === 'active') { req.session.role = user.role; req.session.username = user.username; return next(); }
+  res.status(401).json({ error: 'unauthorized' });
+}
+app.use('/api/projects', requireSessionApi, createProjectRouter({ projects, keys: agentKeys }));
 app.get('/api/files', requireAuth, (req, res) => res.json(workspace.files(req.session.userId)));
 app.delete('/api/files/:name', requireAuth, (req, res) => {
   drive.deleteFiles(req.session.userId, [req.params.name]);
@@ -626,7 +642,8 @@ app.use((error, req, res, next) => {
   const status = error.status || (error instanceof multer.MulterError ? 400 : 500);
   const code = status === 500 ? 'server_error' : error.message;
   if (status === 500) console.error('Request failed:', error.code || error.message);
-  res.status(status).json({ error: code });
+  // Newer modules may attach a safe `detail` (e.g. the current version on a conflict).
+  res.status(status).json(status !== 500 && error.detail !== undefined ? { error: code, detail: error.detail } : { error: code });
 });
 
 const io = new Server(server, {

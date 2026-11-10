@@ -3,7 +3,7 @@ const express = require('express');
 const rateLimit = require('express-rate-limit');
 const path = require('node:path');
 
-function createAgentRouter({ keys, accounts, workspace, drive, handleUpload, emitDrive, emitSnapshot, emitArchives, emitClipboard }) {
+function createAgentRouter({ keys, accounts, workspace, drive, handleUpload, emitDrive, emitSnapshot, emitArchives, emitClipboard, projectRouter }) {
   const router = express.Router();
   router.use(rateLimit({ windowMs: 60000, limit: 240, standardHeaders: true, legacyHeaders: false, message: { error: 'too_many_requests' } }));
   router.use((req, res, next) => {
@@ -27,7 +27,7 @@ function createAgentRouter({ keys, accounts, workspace, drive, handleUpload, emi
   const scope = name => (req, res, next) => { try { keys.authorizeId(req.agent.id, name); next(); } catch (error) { next(error); } };
   const owner = req => req.agent.owner_id;
   const confirm = (req, res, next) => req.body.confirm === true ? next() : res.status(400).json({ error: 'confirmation_required' });
-  router.get('/me', (req, res) => res.json({ username: accounts.getUserById(owner(req)).username, keyName: req.agent.label, scopes: req.agent.scopes, expiresAt: req.agent.expires_at, rateLimitPerMinute: 60 }));
+  router.get('/me', (req, res) => res.json({ username: accounts.getUserById(owner(req)).username, keyName: req.agent.label, actor: req.agent.actor || null, scopes: req.agent.scopes, expiresAt: req.agent.expires_at, rateLimitPerMinute: 60 }));
   router.get('/storage', scope('files:read'), (req, res) => res.json(workspace.storage(owner(req))));
   router.get('/clipboard', scope('clipboard:read'), (req, res) => res.json({ text: workspace.db.prepare('SELECT clipboard_text FROM workspaces WHERE owner_id = ?').get(owner(req))?.clipboard_text || '' }));
   router.put('/clipboard', scope('clipboard:write'), (req, res) => {
@@ -65,6 +65,7 @@ function createAgentRouter({ keys, accounts, workspace, drive, handleUpload, emi
     drive.deleteFiles(owner(req), req.body.names); req.agentTarget = req.body.names.join(', ');
     emitDrive(owner(req)); emitSnapshot(owner(req)); emitArchives(owner(req)); res.json({ ok: true });
   });
+  if (projectRouter) router.use('/projects', projectRouter);
   router.use((req, res) => res.status(404).json({ error: 'not_found' }));
   return router;
 }

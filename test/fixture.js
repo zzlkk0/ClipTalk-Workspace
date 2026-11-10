@@ -59,9 +59,9 @@ async function startFixture(t, { legacy = true, builtinAdmin = false } = {}) {
     await new Promise(resolve => setTimeout(resolve,50));
   } }
   await ready();
-  async function restart() {
+  async function restart(whileStopped) {
     const stopped = new Promise(resolve => child.once('exit', resolve));
-    child.kill('SIGTERM'); await stopped; logs = ''; child = launch(); await ready();
+    child.kill('SIGTERM'); await stopped; if (whileStopped) await whileStopped(); logs = ''; child = launch(); await ready();
   }
   async function request(url, cookie, options = {}) {
     const response = await fetch(base+url, {...options,headers:{...options.headers,...(cookie?{Cookie:cookie}:{})}});
