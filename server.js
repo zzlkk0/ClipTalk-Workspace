@@ -32,12 +32,17 @@ const drive = new DriveStore(workspace);
 const sharing = new SharingStore(workspace, db);
 const { ProjectStore } = require('./project-store');
 const { ContentGuard } = require('./content-guard');
+const { DiskGuard } = require('./disk-guard');
+// Refuse writes before the server disk fills up (admin setting disk_reserve_mb).
+const diskGuard = new DiskGuard(DATA_DIR, key => db.getSetting(key));
+workspace.diskCheck = bytes => diskGuard.check(bytes);
 const projects = new ProjectStore(workspace, {
+  drive, settings: key => db.getSetting(key),
   guard: new ContentGuard(DATA_DIR),
   // Only the change type and id are pushed; pages fetch the content themselves.
   onEvent: (owner, payload) => io.to(ownerRoom(owner)).emit('project-updated', payload),
 });
-const RELEASE = '20261111-projects';
+const RELEASE = '20261111-projects2';
 
 // ── Express & HTTP ────────────────────────────
 const app = express();
@@ -394,8 +399,14 @@ app.post('/api/admin/change-password', requireAuth, requireAdmin, (req, res) => 
 });
 
 // 系统设置
+const NUMERIC_SETTINGS = { disk_reserve_mb: [0, 1048576, 1024], project_quota_mb: [1, 1048576, 200] };
+function numericSetting(key) {
+  const raw = db.getSetting(key), value = Number(raw), [min, max, fallback] = NUMERIC_SETTINGS[key];
+  return raw !== null && raw !== '' && Number.isInteger(value) && value >= min && value <= max ? value : fallback;
+}
 app.get('/api/admin/settings', requireAuth, requireAdmin, (req, res) => {
   res.json({
+    disk_reserve_mb: numericSetting('disk_reserve_mb'), project_quota_mb: numericSetting('project_quota_mb'),
     approval_mode: db.getSetting('approval_mode'),
     registration_enabled: db.getSetting('registration_enabled'),
     site_name: db.getSetting('site_name'),
@@ -417,9 +428,13 @@ app.post('/api/admin/settings', requireAuth, requireAdmin, (req, res) => {
   if (registration_enabled !== undefined) {
     db.setSetting('registration_enabled', registration_enabled ? 'true' : 'false');
   }
-  for (const key of ['idle_timeout_seconds']) {
+  for (const [key, [min, max]] of Object.entries(NUMERIC_SETTINGS)) {
+    if (req.body[key] !== undefined && (!Number.isInteger(req.body[key]) || req.body[key] < min || req.body[key] > max)) return res.status(400).json({ error: 'invalid_setting' });
+  }
+  for (const key of ['idle_timeout_seconds', ...Object.keys(NUMERIC_SETTINGS)]) {
     if (req.body[key] !== undefined) db.setSetting(key, req.body[key]);
   }
+  diskGuard.forget();
   connectionPolicy.refresh();
   res.json({ ok: true });
 });
@@ -429,6 +444,12 @@ app.get('/api/site', (req, res) => res.json({ siteName: db.getSetting('site_name
 // Every workspace API derives the owner from the authenticated session.
 app.get('/api/health', (req, res) => res.json({ ok: true, release: RELEASE, features: ['projects'] }));
 app.get('/api/storage', requireAuth, (req, res) => res.json(workspace.storage(req.session.userId)));
+// Server disk capacity; only administrators see the absolute numbers.
+app.get('/api/disk', requireAuth, (req, res) => {
+  const status = diskGuard.status(), low = status.freeBytes < status.reserveBytes * 2;
+  if (req.session.role !== 'admin') return res.json({ low, full: status.freeBytes < status.reserveBytes });
+  res.json({ ...status, freeBytes: Number.isFinite(status.freeBytes) ? status.freeBytes : null, low, full: status.freeBytes < status.reserveBytes });
+});
 app.get('/api/admin/storage', requireAuth, requireAdmin, (req, res) => {
   res.json(db.listUsers().map(user => ({ id: user.id, username: user.username, ...workspace.storage(user.id) })));
 });
@@ -560,10 +581,26 @@ function handleUpload(req, res, next) {
   });
 }
 app.post('/upload', requireAuth, handleUpload);
+// Receives multipart files for the project folder without adding chat messages.
+function receiveFiles(req, res) {
+  return new Promise((resolve, reject) => {
+    req.once('aborted', () => storage.release(req));
+    upload.array('files', 10)(req, res, error => {
+      storage.release(req);
+      const files = (req.files || []).map(file => ({
+        name: file.filename, path: file.path, size: file.size, time: Date.now(),
+        originalName: path.basename(Buffer.from(file.originalname, 'latin1').toString('utf8').replace(/\\/g, '/')).replace(/[\x00-\x1f\x7f]/g, '') || 'file',
+      }));
+      if (error) { for (const file of files) fs.rmSync(file.path, { force: true }); return reject(error); }
+      if (req.aborted || res.destroyed) { for (const file of files) fs.rmSync(file.path, { force: true }); return reject(Object.assign(new Error('upload_aborted'), { status: 400 })); }
+      resolve(files);
+    });
+  });
+}
 const { createAgentRouter } = require('./agent-api');
 const { createProjectRouter } = require('./project-api');
 app.use('/api/v1', createAgentRouter({ keys: agentKeys, accounts: db, workspace, drive, handleUpload, emitDrive, emitSnapshot, emitArchives,
-  projectRouter: createProjectRouter({ projects, keys: agentKeys }),
+  projectRouter: createProjectRouter({ projects, keys: agentKeys, receiveFiles, uploadsDir: UPLOADS_DIR }),
   emitClipboard: (owner, text) => { io.to(ownerRoom(owner)).emit('clipboard-update', text); emitStorage(owner); },
 }));
 // Browser access to project collaboration acts as USER for the signed-in account.
@@ -572,7 +609,7 @@ function requireSessionApi(req, res, next) {
   if (user && user.status === 'active') { req.session.role = user.role; req.session.username = user.username; return next(); }
   res.status(401).json({ error: 'unauthorized' });
 }
-app.use('/api/projects', requireSessionApi, createProjectRouter({ projects, keys: agentKeys }));
+app.use('/api/projects', requireSessionApi, createProjectRouter({ projects, keys: agentKeys, receiveFiles, uploadsDir: UPLOADS_DIR }));
 app.get('/api/files', requireAuth, (req, res) => res.json(workspace.files(req.session.userId)));
 app.delete('/api/files/:name', requireAuth, (req, res) => {
   drive.deleteFiles(req.session.userId, [req.params.name]);

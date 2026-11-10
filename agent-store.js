@@ -1,8 +1,9 @@
 'use strict';
 const { randomBytes, randomUUID, createHash } = require('node:crypto');
-const SCOPES = ['clipboard:read', 'clipboard:write', 'files:read', 'files:upload', 'files:manage', 'files:delete', 'project:read', 'project:write', 'project:circuits'];
-// Agent identity for project collaboration. USER and ALL are reserved for the browser and broadcasts.
-const ACTOR = /^[A-Z0-9_]{1,32}$/;
+const SCOPES = ['clipboard:read', 'clipboard:write', 'files:read', 'files:upload', 'files:manage', 'files:delete', 'project:read', 'project:write'];
+// Optional default agent name for project collaboration (agents may send X-Agent-Name instead).
+// USER and ALL are reserved for the browser and broadcasts.
+const ACTOR = /^[A-Za-z0-9][A-Za-z0-9_-]{0,31}$/;
 const RESERVED_ACTORS = ['USER', 'ALL'];
 const fail = (code, status = 400) => { throw Object.assign(new Error(code), { status }); };
 
@@ -38,7 +39,7 @@ class AgentStore {
   create(owner, input) {
     const { label, scopes, expiresInDays = 30 } = input;
     const actor = input.actor === undefined || input.actor === null || input.actor === '' ? null : input.actor;
-    if (actor !== null && (typeof actor !== 'string' || !ACTOR.test(actor) || RESERVED_ACTORS.includes(actor))) fail('invalid_key_actor');
+    if (actor !== null && (typeof actor !== 'string' || !ACTOR.test(actor) || RESERVED_ACTORS.includes(actor.toUpperCase()))) fail('invalid_key_actor');
     if (typeof label !== 'string' || !label.trim() || label.trim().length > 80 || /[\x00-\x1f\x7f]/.test(label)) fail('invalid_key_label');
     if (!Array.isArray(scopes) || !scopes.length || scopes.length > SCOPES.length || scopes.some(scope => !SCOPES.includes(scope))) fail('invalid_key_scopes');
     if (!Number.isInteger(expiresInDays) || expiresInDays < 1 || expiresInDays > 365) fail('invalid_key_expiry');

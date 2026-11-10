@@ -240,6 +240,9 @@ async function load(){
     h+='<div class="input-line"><label for="site-name">网站名称</label><input id="site-name" maxlength="80" placeholder="共享工作区（默认）"><button class="btn btn-ok" id="save-site-name" onclick="saveSiteName()">保存名称</button><span id="site-name-msg" class="toast"></span></div>';
     h+='<form id="timeout-form" onsubmit="saveTimeouts(event)"><div class="input-line"><label for="idle-timeout">空闲断开（秒）</label><input id="idle-timeout" type="number" min="5" max="86400" step="1" required><button class="btn btn-ok" type="submit">保存超时设置</button><span id="timeout-msg" class="toast" role="status"></span></div></form>';
     h+='<p class="storage-hint">默认空闲 1800 秒（30 分钟）后暂停实时连接，点击“恢复连接”继续使用。设置保存后立即生效。</p>';
+    h+='<div class="input-line"><label>服务器硬盘</label><progress id="disk-bar" max="100" value="0" style="flex:1;min-width:120px;height:10px"></progress><span id="disk-text" class="toast" style="opacity:1"></span></div>';
+    h+='<form id="capacity-form" onsubmit="saveCapacity(event)"><div class="input-line"><label for="disk-reserve">硬盘保留（MB）</label><input id="disk-reserve" type="number" min="0" max="1048576" step="1" required><label for="project-quota">项目协同上限（MB/账号）</label><input id="project-quota" type="number" min="1" max="1048576" step="1" required><button class="btn btn-ok" type="submit">保存容量设置</button><span id="capacity-msg" class="toast" role="status"></span></div></form>';
+    h+='<p class="storage-hint">剩余空间低于“硬盘保留”时，所有上传和写入都会被拒绝（防止写满硬盘）。“项目协同上限”限制每个账号所有项目（文字与项目文件夹）的总大小。</p>';
     h+='<div class="setting-row">';
     h+='<label>审批模式</label>';
     h+='<div class="toggle-group">';
@@ -264,7 +267,10 @@ async function load(){
     app.innerHTML=h;
     document.getElementById('site-name').value=settings.site_name||'';
     document.getElementById('idle-timeout').value=settings.idle_timeout_seconds;
+    document.getElementById('disk-reserve').value=settings.disk_reserve_mb;
+    document.getElementById('project-quota').value=settings.project_quota_mb;
     renderStorage(storage);
+    refreshDisk();
   }catch(e){
     app.innerHTML='<div class="center-msg err">⚠ 加载失败: '+esc(e.message)+'</div>';
   }
@@ -290,6 +296,24 @@ async function saveTimeouts(event){
   finally{button.disabled=false}
 }
 
+async function saveCapacity(event){
+  event.preventDefault();const button=event.target.querySelector('button'),message=document.getElementById('capacity-msg');
+  button.disabled=true;
+  try{
+    await ClipTalkUI.api('/api/admin/settings',ClipTalkUI.json('POST',{disk_reserve_mb:Number(document.getElementById('disk-reserve').value),project_quota_mb:Number(document.getElementById('project-quota').value)}));
+    message.textContent='✓ 已保存，立即生效';message.className='toast ok';refreshDisk();
+  }catch(error){message.textContent=ClipTalkUI.error(error.message);message.className='toast err'}
+  finally{button.disabled=false}
+}
+async function refreshDisk(){
+  try{
+    const disk=await ClipTalkUI.api('/api/disk'),bar=document.getElementById('disk-bar'),text=document.getElementById('disk-text');
+    if(!disk.totalBytes){text.textContent='无法读取硬盘信息';return}
+    bar.value=disk.usedBytes/disk.totalBytes*100;
+    text.textContent='已用 '+formatBytes(disk.usedBytes)+' / '+formatBytes(disk.totalBytes)+'，剩余 '+formatBytes(disk.freeBytes)+'（保留 '+formatBytes(disk.reserveBytes)+'）'+(disk.full?' — 已满，写入被拒绝':disk.low?' — 空间紧张':'');
+    text.style.color=disk.low?'var(--red)':'';
+  }catch(error){}
+}
 function formatBytes(bytes){return ClipTalkUI.size(bytes)}
 function renderStorage(storage){
   const total={usedBytes:0,quotaBytes:0,fileBytes:0,textBytes:0};

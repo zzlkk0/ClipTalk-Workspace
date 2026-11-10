@@ -11,12 +11,12 @@
   <section id="empty-state" class="card" hidden><h2 data-t="project.empty_title">还没有项目</h2><p class="muted" data-t="project.empty_hint"></p></section>
   <nav id="project-tabs" class="project-tabs" role="tablist" hidden>
     <button role="tab" data-tab="overview" data-t="project.tab_overview">总览</button>
-    <button role="tab" data-tab="tasks" data-t="project.tab_tasks">任务</button>
-    <button role="tab" data-tab="messages" data-t="project.tab_messages">对话</button>
-    <button role="tab" data-tab="decisions" data-t="project.tab_decisions">待决事项</button>
-    <button role="tab" data-tab="circuits" data-t="project.tab_circuits">电路</button>
-    <button role="tab" data-tab="texts" data-t="project.tab_texts">记忆与文档</button>
-    <button role="tab" data-tab="handoffs" data-t="project.tab_handoffs">交付</button>
+    <button role="tab" data-tab="tasks" data-module="tasks" data-t="project.tab_tasks">任务</button>
+    <button role="tab" data-tab="messages" data-module="messages" data-t="project.tab_messages">对话</button>
+    <button role="tab" data-tab="decisions" data-module="decisions" data-t="project.tab_decisions">待决事项</button>
+    <button role="tab" data-tab="handoffs" data-module="handoffs" data-t="project.tab_handoffs">交付</button>
+    <button role="tab" data-tab="viewer" data-module="viewer" data-t="project.tab_viewer">交付物查看</button>
+    <button role="tab" data-tab="files" data-module="files" data-t="project.tab_files">文件</button>
   </nav>
   <div id="project-view"></div>
 </main>
@@ -24,5 +24,13 @@
   <label for="new-project-id" data-t="project.project_id">项目 ID</label><input id="new-project-id" required pattern="[a-z0-9][a-z0-9_\-]{0,63}" autocomplete="off" placeholder="fyp">
   <p class="hint" data-t="project.project_id_hint"></p>
   <label for="new-project-name" data-t="project.project_name">名称</label><input id="new-project-name" maxlength="120" autocomplete="off">
+  <p data-t="project.modules">模块</p><div class="module-picks">
+    <label><input type="checkbox" data-new-module="messages" checked><span data-t="project.tab_messages">对话</span></label>
+    <label><input type="checkbox" data-new-module="decisions" checked><span data-t="project.tab_decisions">待决事项</span></label>
+    <label><input type="checkbox" data-new-module="files" checked><span data-t="project.tab_files">文件</span></label>
+    <label><input type="checkbox" data-new-module="tasks"><span data-t="project.tab_tasks">任务</span></label>
+    <label><input type="checkbox" data-new-module="handoffs"><span data-t="project.tab_handoffs">交付</span></label>
+    <label><input type="checkbox" data-new-module="viewer"><span data-t="project.tab_viewer">交付物查看</span></label>
+  </div><p class="hint" data-t="project.modules_hint"></p>
   <div class="actions"><button type="button" id="new-project-cancel" data-t="workspace.cancel">取消</button><button type="submit" class="primary" data-t="project.create">创建</button></div></form></dialog>
 </body></html>

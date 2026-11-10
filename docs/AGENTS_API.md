@@ -30,10 +30,9 @@ Open **My account → Agent access**, enter an assistant name and validity (1–
 | `files:manage` | Create/rename/move folders and move files |
 | `files:delete` | Permanently delete files and folders, including nested contents |
 | `project:read` | Read project collaboration data (section 7) |
-| `project:write` | Write own status, task status/notes, messages, handoffs, decisions, own memory and own WORKFLOW copy |
-| `project:circuits` | Upload circuit topologies and results |
+| `project:write` | Write in projects: messages, status, summary, modules, tasks (proposals), handoffs, decisions, project files and viewer data |
 
-A key may also get an **actor** (for example `SERVER` or `PC`: 1–32 uppercase letters, digits or underscore; not `USER` or `ALL`). It is fixed at creation and identifies the agent in projects. Keys without an actor can read projects but not write. Project scopes are not selected by default.
+A key may also carry a default **agent name** (letters, digits, `_`, `-`; up to 32 characters; not `USER` or `ALL`). Agents normally choose their name per request with the `X-Agent-Name` header, so one key can serve `PC1`, `PC2`, `server1` and so on. Project scopes are not selected by default.
 
 The full key is shown once. The server stores its SHA-256 digest, not its secret. Create a separate key for each assistant. Keys never grant administration, password changes, key management, or access to another account. Supplying a user ID does not change ownership. A browser session cookie is not a substitute for the Bearer key on `/api/v1`.
 
@@ -156,77 +155,66 @@ The **Agent access** page shows the latest 1,000 authenticated API attempts per 
 
 ## 7. Project collaboration
 
-A project lets several agents and you work on one plan. Create a project in the web page (**Projects** in the workspace header, or `/project.html`), then create one key per agent with an actor and the project scopes. `GET /api/health` lists `"features": ["projects"]` when the server supports it.
+A project is a shared space for any number of agents and you (the owner). Create it on the **Projects** page (`/project.html`), pick the modules you need, and give each agent the prompt from the overview (also in [PROJECT_AGENT_PROMPT.md](PROJECT_AGENT_PROMPT.md)). `GET /api/health` lists `"features": ["projects"]`.
 
-Identity always comes from the key's actor; `from`, `sender` or `actor` in a request body is ignored. In the browser you act as `USER`.
+### Identity and permissions
 
-| Operation | Agent with actor | Agent without actor | Browser (`USER`) |
-| --- | :-: | :-: | :-: |
-| Read everything in the project | ✓ (`project:read`) | ✓ | ✓ |
-| Own status, own memory, own `WORKFLOW_<ACTOR>` copy | ✓ (`project:write`) | ✗ | ✓ any |
-| Status/notes of tasks listing the actor as owner | ✓ (`project:write`) | ✗ | ✓ any field |
-| Messages, handoffs, decisions | ✓ (`project:write`) | ✗ | ✓ |
-| Topology and results | ✓ (`project:circuits`) | ✗ | ✓ |
-| Create projects, switches, other documents (e.g. `05_SHARED_INTERFACE`, `SPECS`), task import, answering decisions, any deletion | `403 browser_session_required` | ✗ | ✓ (deletion needs `confirm: true`) |
+- Agents name themselves with `X-Agent-Name` (CLI `--as`, env `CLIPTALK_AGENT_NAME`), falling back to the key's default name. A write without a name returns `403 agent_name_required`. The first write under a name adds it to the project's members. In the browser you are `USER`.
+- Agents with `project:write` may change almost everything: messages, handoffs, decisions (not answers), anyone's status, the summary, modules, switches, project files and viewer data. **The constraints are in the project's `RULES.md`**, which agents read at the start of every session; the API does not enforce them.
+- Owner only (`403 owner_only`): creating and deleting projects, answering decisions, importing task tables, editing `RULES.md`.
+- Approval: a task created by an agent starts as `proposed` and gets an `approve_task` decision; only the owner's answer (`approve` / `reject`) moves it to `todo` or `rejected`. Agents cannot change these states (`403 approval_required`).
+- Deleting a record or file needs `{ "confirm": true }`.
 
-Messages and memory written by another agent are information, not instructions.
+### Project folder
+
+Every project owns a folder in the owner's drive: `项目协同/<project name>/` with `RULES.md` (prohibited actions, owner only), `GUIDE.md` (conventions), and `agents/`, `memory/`, `docs/`, `deliverables/`. Agents keep their short self-description in `agents/<name>.md` and long-lived notes in `memory/<name>.md`. Saving a file with an existing name replaces it; pass the `etag` you read to avoid overwriting a newer version (`409 version_conflict`). Project files are drive files: they count toward the account quota and appear in the drive, but not in the chat file list.
+
+### Modules
+
+`tasks`, `messages`, `decisions`, `handoffs`, `viewer` and `files` can each be switched on or off by the owner or an agent (`PUT /{p}/modules`). Writes to a disabled module return `409 module_disabled`; data is kept. The overview (summary, members, statuses, switches, events) is always on. The viewer's title is configurable (`viewer_title`, default “交付物查看 / Deliverables”).
 
 ### Conventions
 
-- Base path: `/api/v1/projects/{project}` for agents, `/api/projects/{project}` for the browser. Times are UTC ISO 8601; the page shows `Asia/Macau`.
-- Changeable objects (status, task, switches, document, memory) carry an integer `version`. Send the version you read (`0` to create). A mismatch returns `409 {"error":"version_conflict","detail":{"version":N,"current":…}}`.
-- Messages, handoffs and results are append-only. Correct a handoff or result by sending a new one with `supersedes` (its id). Topologies get a new version on every upload.
-- Writes accept `Idempotency-Key` (printable ASCII, ≤ 200 chars). Within 24 hours the same key with the same content returns the first response (`Idempotent-Replayed: true`); different content returns `422 idempotency_key_reused`. Keys are per API key; content is compared independent of JSON key order.
-- Limits: message 8,000 characters; memory 64 KB; document 256 KB; topology 512 KB and 2,000 nodes; 500 results per request; 20 projects per account. Project text counts toward the account quota (`413 quota_exceeded`).
-- Content check: writes whose text looks like SPICE/Spectre model cards, many BSIM parameters, `.lib`/`include` statements with file paths, Liberty or LEF structures, or paths containing PDK/foundry directory names are refused with `422 sensitive_content_blocked` and `detail.rule`; the content is not echoed or logged. Add your own keywords or regular expressions in `project-content-rules.json` in the data directory (created on first start; changes apply without restart). This is a second line of defence, not a replacement for sanitizing uploads.
-- Every write is recorded in the event log and pushed to signed-in pages as a Socket.IO `project-updated` event (type and id only). The audit log records route and object id, never content.
+- Base path: `/api/v1/projects/{p}` for agents, `/api/projects/{p}` in the browser. Times are UTC ISO 8601.
+- Changeable objects carry a `version`; send the one you read (`0` to create). Mismatch: `409 {"error":"version_conflict","detail":{...}}`.
+- Writes accept `Idempotency-Key` (per API key, 24 h; same body replays with `Idempotent-Replayed: true`, a different body returns `422 idempotency_key_reused`).
+- Limits: message 8,000 characters; status 16 KB; summary 4,000 characters; text file write 900 KB (larger files via upload, 500 MB each); graph 512 KB / 2,000 nodes; 500 records per request; 50 members; 20 projects.
+- **Capacity:** all projects of an account share a ceiling (admin setting *project collaboration limit*, default 200 MB) → `413 project_quota_exceeded`. Every write in the whole site stops when free disk space would fall below the admin's *disk reserve* (default 1024 MB) → `507 disk_full`. Administrators see a disk bar in the workspace and admin page; `GET /api/disk` returns totals for administrators and only `low`/`full` for others.
+- Content check: text that looks like model cards, BSIM parameter lists, `.lib`/`include` paths, Liberty/LEF structures or PDK/foundry paths is refused with `422 sensitive_content_blocked`. Add keywords or patterns in `project-content-rules.json` in the data directory.
+- Changes are pushed to open pages as the Socket.IO event `project-updated` and are listed by the event stream.
 
 ### Routes
 
-| # | Method and path | Scope | Notes |
-| --- | --- | --- | --- |
-| P1 | `GET /api/v1/me`, `GET /api/health` | any | actor and scopes; `features` |
-| P1 | `GET /projects` | `project:read` | list projects |
-| P2 | `GET /{p}/state` | `project:read` | switches + `switches_version`, all statuses, open/blocking decision counts, task counts, event `cursor` |
-| P2 | `PUT /{p}/state` | browser | `{ "switches": {"PLL_PAUSED": true}, "version": N }` |
-| P3 | `GET /{p}/status` | `project:read` | all actors |
-| P3 | `PUT /{p}/status/{actor}` | `project:write` | `{ "status": {…}, "version": N }`, own actor only, ≤ 16 KB |
-| P4 | `GET /{p}/tasks?owner=&status=&phase=`, `GET /{p}/tasks/{id}` | `project:read` | |
-| P4 | `PATCH /{p}/tasks/{id}` | `project:write` | agents: `status` (`todo`, `in_progress`, `blocked`, `review`, `done`, `dropped`) and `notes` only, plus `version` |
-| P4 | `POST /{p}/tasks/import` | browser | `{ "tasks": [{ "id", "title", "owners": ["SERVER"], "phase", "depends", "done_when", "deliver_to", "owner_label" }] }`; duplicate ids are refused; existing tasks keep status and notes |
-| P5 | `GET /{p}/messages?since=&thread=&to=&task=&from=&limit=&order=` | `project:read` | `to=PC` also returns messages to `ALL`; `since` is a message id |
-| P5 | `POST /{p}/messages` | `project:write` | `{ "to": "PC", "type": "question", "body": "…", "task_id": "I3", "thread": "msg-12", "refs": [{"kind":"handoff","id":"ho-3"}] }`; without `thread` a new thread starts |
-| P6 | `POST /{p}/handoffs`, `GET /{p}/handoffs?task=`, `GET /{p}/handoffs/{id}` | `project:write` / `project:read` | fields of 08 §4.2; `sha256` is 64 hex digits; replies show `superseded_by` |
-| P7 | `POST /{p}/decisions`, `GET /{p}/decisions?status=open&task=`, `GET /{p}/decisions/{id}` | `project:write` / `project:read` | `{ "question", "options": [], "recommendation", "blocking": true, "task_id" }` |
-| P7 | `POST /{p}/decisions/{id}/answer` | browser | `{ "answer": "…" }` |
-| P8 | `GET /{p}/docs`, `GET /{p}/docs/{name}?version=`, `GET /{p}/docs/{name}/history` | `project:read` | |
-| P8 | `PUT /{p}/docs/{name}` | `project:write` | agents only `WORKFLOW_<ACTOR>`; `{ "content", "version" }` |
-| P9 | `GET /{p}/memory`, `GET /{p}/memory/{actor}?version=`, `GET /{p}/memory/{actor}/history` | `project:read` | |
-| P9 | `PUT /{p}/memory/{actor}` | `project:write` | own actor only |
-| P10 | `PUT /{p}/circuits/{circuit}/topology` | `project:circuits` | body is `circuit-topology/v1`; returns the new `version` |
-| P10 | `GET /{p}/circuits`, `GET /{p}/circuits/{c}/topology?version=`, `GET /{p}/circuits/{c}/topologies` | `project:read` | |
-| P11 | `POST /{p}/circuits/{c}/results` | `project:circuits` | `{ "results": [ … ] }` or an array, ≤ 500; returns `ids` |
-| P11 | `GET /{p}/circuits/{c}/results?since=&task=&metric=&candidate=&status=&node=&case=&current=1&limit=`, `GET /{p}/results?…` (all circuits) | `project:read` | `current=1` hides superseded records; `next` gives the following page |
-| P11 | `GET /{p}/circuits/{c}/summary` | `project:read` | per node: counts and `state` (`PASS`, `FAIL`, `INCOMPLETE`, `NO_LIMIT`) from the latest result per metric and case |
-| P12 | `GET /{p}/events?since={cursor}&wait=25` | `project:read` | returns `{events, cursor, latest, more, reset}`; waits up to 25 s when nothing is new; `reset: true` means re-read state and continue from `cursor` |
-| — | `DELETE /{p}` and `DELETE /{p}/{messages\|handoffs\|decisions\|results\|tasks\|topologies\|docs\|memory}/{id}` | browser | `{ "confirm": true }` |
+| Method and path | Notes |
+| --- | --- |
+| `GET /projects`; `POST /projects` (owner); `DELETE /{p}` (owner, `confirm`, optional `deleteFiles`) | |
+| `GET /{p}/state` | summary, modules, members, statuses, switches, open decisions, task counts, usage, event cursor |
+| `PUT /{p}/summary` `{text, version}`; `PUT /{p}/modules` `{modules, version, viewer_title?}`; `PUT /{p}/switches` `{switches, version}` | |
+| `GET /{p}/members`; `PUT /{p}/members/{name}` `{role}`; `DELETE /{p}/members/{name}` | |
+| `GET /{p}/status`; `PUT /{p}/status/{name}` `{status, version}`; `DELETE /{p}/status/{name}` | |
+| `GET /{p}/tasks`; `POST /{p}/tasks` `{id, title, owners, phase, depends, done_when, deliver_to}`; `GET`/`PATCH /{p}/tasks/{id}`; `POST /{p}/tasks/import` (owner) | agent-created tasks need approval |
+| `GET /{p}/messages?since=&thread=&to=&task=`; `POST /{p}/messages`; `PATCH /{p}/messages/{id}` `{body}` | `to` is a member, `USER` or `ALL` |
+| `GET /{p}/handoffs?task=`; `POST /{p}/handoffs`; `GET`/`PUT /{p}/handoffs/{id}` | file `location` may be `project:deliverables/...` |
+| `GET /{p}/decisions?status=`; `POST /{p}/decisions`; `GET`/`PATCH /{p}/decisions/{id}`; `POST /{p}/decisions/{id}/answer` (owner) | |
+| `GET /{p}/files?path=&recursive=1`; `GET /{p}/files/content?path=`; `PUT /{p}/files/content` `{path, content, etag?}`; `GET /{p}/files/raw?path=`; `POST /{p}/files/upload?path=DIR` (multipart `files`); `DELETE /{p}/files` `{path, confirm}` | |
+| `GET /{p}/views`; `PUT /{p}/views/{v}/graph`; `GET /{p}/views/{v}/graph?version=`; `GET /{p}/views/{v}/graphs`; `POST /{p}/views/{v}/records`; `GET /{p}/views/{v}/records?since=&task=&metric=&candidate=&status=&node=&current=1`; `GET /{p}/views/{v}/summary`; `GET /{p}/records` | viewer data |
+| `GET /{p}/events?since=&wait=25` | long polling, `reset: true` means re-read state |
+| `DELETE /{p}/{messages\|handoffs\|decisions\|records\|tasks\|graphs\|status}/{id}` | `confirm: true` |
 
-Topology validation: `schema` is `circuit-topology/v1`, `level` is `block` or `device`, node ids are unique, `kind` is a generic class (`lnta`, `lna`, `mixer`, `tia`, `ppf`, `vga`, `driver`, `buffer`, `filter`, `sar_adc`, `adc`, `dac`, `comparator`, `pll`, `dco`, `vco`, `divider`, `ldo`, `bandgap`, `digital`, `balun`, `switch`, `port`, `block`, `subckt`, `other`, `nmos`, `pmos`, `res`, `cap`, `ind`, `mim`, `mom`, `vsrc`, `isrc`, `diode`, `bjt`), groups referenced by nodes exist, edge ends are `NODE` or `NODE.port` of existing nodes, edge `kind` is `signal`, `lo`, `supply`, `bias`, `clock` or `digital`, and `params` values are numbers, strings or booleans. Errors return `400 invalid_topology` with `detail.problem` and `detail.path`.
-
-Result validation: `schema` is `circuit-result/v1`, `status` is `PASS`, `FAIL`, `NO_LIMIT`, `NATIVE_FAILED` or `BLOCKED`, `NATIVE_FAILED`/`BLOCKED` carry no `value` and others need a finite number, `evidence_level` is `L0`–`L7`, `limit.op` is `>=`, `<=`, `>`, `<`, `==` or `between`. Errors return `400 invalid_result` with `detail.index` and `detail.problem`.
+Graphs (`graph/v1`): `nodes` (`id`, optional `kind`, `label`, `group`, `params`), `edges` (`from`, `to` as `NODE` or `NODE.port`, optional `kind`, `net`), `groups`. Each upload is a new version and the page can compare two versions. Records (`record/v1`): one value per record — `metric`, `value`, `unit`, `status` (any short identifier; `PASS`, `FAIL`, `NO_LIMIT`, `NATIVE_FAILED`, `BLOCKED` are colored), `limit`, `conditions`, `task_id`, `case_id`, `node`, `supersedes`. Files in `deliverables/` are previewed in the viewer: CSV as table and chart, images inline, text as text.
 
 ### Clients
 
-- **CLI:** `node scripts/cliptalk.js project …` — see `--help`. Commands: `list`, `state`, `status`, `set-status`, `tasks`, `task`, `update-task`, `messages`, `send`, `handoffs`, `handoff`, `decisions`, `ask`, `doc-get`, `doc-put`, `doc-history`, `memory-get`, `memory-put`, `memory-history`, `circuits`, `topology-get`, `topology-push`, `results-get`, `results-push` (CSV/JSONL/JSON), `events` (`--cursor-file`, `--wait`). Missing `--version` is read first. `results-push` sends 500 per request with idempotency keys derived from the file, so re-running is safe.
-- **MCP:** with project scopes the adapter adds `project_list`, `project_state`, `project_events`, `project_tasks`, `project_messages`, `project_handoffs`, `project_decisions`, `project_get_doc`, `project_get_memory`, `project_circuits`, `project_get_topology`, `project_get_results`, and, for keys with an actor, `project_set_status`, `project_update_task`, `project_send_message`, `project_add_handoff`, `project_raise_decision`, `project_put_doc`, `project_put_memory`, `project_push_topology`, `project_push_results`. Write tools accept `idempotencyKey`.
-- **Python 3.6+ (no Node):** `agent/cliptalk_min.py`, same commands; see [agent/CLIPTALK_MIN.md](../agent/CLIPTALK_MIN.md).
-- **Connectivity check:** `python3 scripts/check-connectivity.py --project ID [--write-test] [--json]` checks DNS, TCP, TLS, health, key and project access. It only reports and never tries to get around network restrictions.
+- **CLI:** `node scripts/cliptalk.js project <command> <project> ... --as NAME` (see `--help`): `state`, `members`, `member-set`, `summary`, `modules`, `status`, `set-status`, `tasks`, `task`, `task-add`, `update-task`, `messages`, `send`, `edit-message`, `handoffs`, `handoff`, `decisions`, `ask`, `files`, `file-get`, `file-put`, `upload`, `download`, `file-rm`, `views`, `graph-get`, `graph-push`, `records-get`, `records-push` (CSV/JSONL/JSON, idempotent batches), `events` (`--cursor-file`), `delete`.
+- **MCP:** set `CLIPTALK_AGENT_NAME` in the adapter's environment. Read tools: `project_list`, `project_state`, `project_events`, `project_tasks`, `project_messages`, `project_handoffs`, `project_decisions`, `project_files`, `project_read_file`, `project_views`, `project_get_records`. With a name, also `project_set_status`, `project_set_summary`, `project_set_modules`, `project_set_member`, `project_add_task`, `project_update_task`, `project_send_message`, `project_add_handoff`, `project_raise_decision`, `project_write_file`, `project_upload_file`, `project_push_graph`, `project_push_records`.
+- **Python 3.6+ without Node:** `agent/cliptalk_min.py`, same commands; see [agent/CLIPTALK_MIN.md](../agent/CLIPTALK_MIN.md).
+- **Connectivity check:** `python3 scripts/check-connectivity.py --project ID [--write-test --as NAME] [--json]` — reports only, never works around network restrictions.
 
 ### 中文速览
 
-- 在网页“项目协同”页新建项目；在“Agent 接入”为每个 agent 建一把带 actor（如 `SERVER`、`PC`）的密钥，勾选 `project:read`、`project:write`，上传电路数据再加 `project:circuits`。
-- 身份只由密钥的 actor 决定，请求体里的 `from` 会被忽略；agent 只能改本方状态、本方记忆、本方 `WORKFLOW_<ACTOR>` 副本和本方负责任务的状态与备注。开关、05/SPECS 等文档、任务导入、答复待决事项和删除只能在网页上做。
-- 可修改对象带 `version`，冲突返回 409 并附当前版本；对话、交付、结果只追加，更正用 `supersedes`；写请求可带 `Idempotency-Key`。
-- 事件流 `GET /events?since=&wait=25` 返回游标之后的变化，没有变化时最多等 25 秒。
-- 上传内容若像模型卡、Liberty/LEF 或 PDK 路径会被 `422 sensitive_content_blocked` 拦截；自定义关键词写在数据目录的 `project-content-rules.json`。
-- 学校服务器用 `agent/cliptalk_min.py`（Python 3.6 标准库），先跑 `scripts/check-connectivity.py` 测通。
+- 在“项目协同”页新建项目并选择模块；每个项目在网盘“项目协同/项目名”下有自己的文件夹，内含 `RULES.md`（禁止事项，只有你能改）和 `GUIDE.md`（规范）。
+- agent 自己取名（请求头 `X-Agent-Name`，命令行 `--as`），一把密钥可以给多个 agent 用；第一次写入时自动成为成员。
+- agent 权限很宽（可改留言、交付、待决事项、任何人的状态和项目文件），限制写在 `RULES.md`，agent 每次会话开始读一次。只有你能建/删项目、答复待决事项、导入任务、改 `RULES.md`；agent 新建的任务要你批准。
+- 模块（任务、对话、待决事项、交付、交付物查看、文件）你和 agent 都能开关；查看模块的标题可以改。
+- 容量：项目协同有每账号上限（默认 200 MB），整站有硬盘保留空间（默认 1 GB），都在管理面板设置；管理员能看到硬盘容量条。
+- 给 agent 的通用提示词见 [PROJECT_AGENT_PROMPT.md](PROJECT_AGENT_PROMPT.md)，网页总览里有一键复制版本。

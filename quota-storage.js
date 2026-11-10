@@ -16,6 +16,7 @@ class QuotaStorage {
     const pending = this.pending.get(reservation.owner) || 0;
     const { usedBytes, quotaBytes } = this.workspace.storage(reservation.owner);
     if (usedBytes + pending + bytes > quotaBytes) throw Object.assign(new Error('quota_exceeded'), { status: 413 });
+    this.workspace.diskCheck?.(bytes);
     reservation.bytes += bytes;
     this.pending.set(reservation.owner, pending + bytes);
   }

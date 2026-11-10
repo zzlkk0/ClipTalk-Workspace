@@ -95,6 +95,52 @@ class Client(object):
             raise ApiError('connection_failed: %s' % getattr(error, 'reason', error))
 
 
+    def upload(self, endpoint, paths, headers):
+        boundary = 'cliptalk' + hashlib.sha256(os.urandom(16)).hexdigest()[:24]
+        chunks = []
+        for item in paths:
+            if not os.path.isfile(item):
+                raise ApiError('Not a regular file: %s' % item)
+            name = os.path.basename(item).replace('"', '_')
+            with open(item, 'rb') as handle:
+                data = handle.read()
+            chunks.append(('--%s\r\nContent-Disposition: form-data; name="files"; filename="%s"\r\nContent-Type: application/octet-stream\r\n\r\n' % (boundary, name)).encode('utf-8') + data + b'\r\n')
+        body = b''.join(chunks) + ('--%s--\r\n' % boundary).encode('utf-8')
+        request = urllib.request.Request(self.base + '/api/v1' + endpoint, data=body, method='POST')
+        request.add_header('Authorization', 'Bearer ' + self.token)
+        request.add_header('Content-Type', 'multipart/form-data; boundary=' + boundary)
+        for key, value in headers.items():
+            request.add_header(key, value)
+        try:
+            return json.loads(self.opener.open(request, timeout=600).read().decode('utf-8'))
+        except urllib.error.HTTPError as error:
+            try:
+                payload = json.loads(error.read().decode('utf-8'))
+            except Exception:
+                payload = {}
+            raise ApiError(payload.get('error', 'HTTP %d' % error.code), error.code, None, payload.get('detail'))
+
+    def download(self, endpoint, output, headers):
+        if os.path.exists(output):
+            raise ApiError('Refusing to overwrite %s' % output)
+        request = urllib.request.Request(self.base + '/api/v1' + endpoint)
+        request.add_header('Authorization', 'Bearer ' + self.token)
+        for key, value in headers.items():
+            request.add_header(key, value)
+        try:
+            response = self.opener.open(request, timeout=600)
+        except urllib.error.HTTPError as error:
+            raise ApiError('HTTP %d' % error.code, error.code)
+        fd = os.open(output, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, 'wb') as handle:
+            while True:
+                block = response.read(65536)
+                if not block:
+                    break
+                handle.write(block)
+        return {'ok': True, 'path': os.path.abspath(output)}
+
+
 def number(value):
     try:
         result = float(value)
@@ -109,7 +155,7 @@ def parse_results(text, filename, defaults):
         out = []
         for line in stripped.splitlines():
             if line.strip():
-                item = {'schema': 'circuit-result/v1'}; item.update(defaults); item.update(json.loads(line)); out.append(item)
+                item = {'schema': 'record/v1'}; item.update(defaults); item.update(json.loads(line)); out.append(item)
         return out
     if filename.lower().endswith('.json') or stripped.startswith('[') or stripped.startswith('{'):
         data = json.loads(stripped)
@@ -118,14 +164,14 @@ def parse_results(text, filename, defaults):
             raise ApiError('JSON must be an array or {"results": [...]}.')
         out = []
         for entry in items:
-            item = {'schema': 'circuit-result/v1'}; item.update(defaults); item.update(entry); out.append(item)
+            item = {'schema': 'record/v1'}; item.update(defaults); item.update(entry); out.append(item)
         return out
     rows = list(csv.DictReader(io.StringIO(text)))
     if not rows:
         raise ApiError('CSV needs a header row and at least one data row.')
     out = []
     for row in rows:
-        result = {'schema': 'circuit-result/v1'}
+        result = {'schema': 'record/v1'}
         result.update(defaults)
         conditions, limit, run = dict(defaults.get('conditions', {})), {}, dict(defaults.get('run', {}))
         for key, raw in row.items():
@@ -178,46 +224,97 @@ def run_project(client, args):
         raise ApiError('Missing project command. Use --help.')
     command, project, rest = rest[0], (rest[1] if len(rest) > 1 else None), rest[2:]
     q = urllib.parse.quote
+    agent = (args.as_name or os.environ.get('CLIPTALK_AGENT_NAME') or '').strip()
 
     def need(n):
         if len(rest) != n or not project:
             raise ApiError('Wrong number of arguments. Use --help.')
 
+    def headers(extra=None):
+        out = {}
+        if agent:
+            out['X-Agent-Name'] = agent
+        if args.idempotency_key:
+            out['Idempotency-Key'] = args.idempotency_key
+        out.update(extra or {})
+        return out
+
+    def call(endpoint, method='GET', body=None, extra=None, timeout=60):
+        return client.request(endpoint, method, body, headers(extra), timeout=timeout)
+
     base = '/projects/' + q(project or '', safe='')
-    idem = {'Idempotency-Key': args.idempotency_key} if args.idempotency_key else {}
 
     def version_of(endpoint, pick=lambda data: data.get('version')):
         if args.version is not None:
             return int(args.version)
         try:
-            return pick(client.request(endpoint)) or 0
+            return pick(call(endpoint)) or 0
         except ApiError as error:
             if error.status == 404:
                 return 0
             raise
 
-    def my_actor():
-        actor = client.request('/me').get('actor')
-        if not actor:
-            raise ApiError('This key has no actor.')
-        return actor
+    def me():
+        if not agent:
+            raise ApiError('Set --as NAME or CLIPTALK_AGENT_NAME.')
+        return agent
+
+    def text_of():
+        if (args.text is None) == (args.file is None):
+            raise ApiError('Choose exactly one of --text or --file.')
+        return args.text if args.text is not None else read(args.file)
 
     if command == 'list':
-        return client.request('/projects')
+        return call('/projects')
     if command == 'state':
-        need(0); return client.request(base + '/state')
+        need(0); return call(base + '/state')
+    if command == 'members':
+        need(0); return call(base + '/members')
+    if command == 'member-set':
+        need(1); return call(base + '/members/' + q(rest[0], safe=''), 'PUT', {'role': args.role or ''})
+    if command == 'summary':
+        need(0)
+        state = call(base + '/state')
+        version = int(args.version) if args.version is not None else state['summary']['version']
+        return call(base + '/summary', 'PUT', {'text': text_of(), 'version': version})
+    if command == 'modules':
+        need(0)
+        state = call(base + '/state')
+        modules = {}
+        for name in (args.enable or '').split(','):
+            if name.strip():
+                modules[name.strip()] = True
+        for name in (args.disable or '').split(','):
+            if name.strip():
+                modules[name.strip()] = False
+        if not modules and args.title is None:
+            return {'modules': state['modules'], 'viewer_title': state['project']['viewer_title']}
+        body = {'modules': modules, 'version': state['modules_version']}
+        if args.title is not None:
+            body['viewer_title'] = args.title
+        return call(base + '/modules', 'PUT', body)
     if command == 'status':
-        need(0); return client.request(base + '/status')
+        need(0); return call(base + '/status')
     if command == 'set-status':
         need(0)
-        actor = my_actor()
+        actor = args.for_name or me()
         status = json.loads(args.json if args.json is not None else read(args.file))
         version = version_of(base + '/status', lambda data: next((row['version'] for row in data['statuses'] if row['actor'] == actor), 0))
-        return client.request(base + '/status/' + q(actor, safe=''), 'PUT', {'status': status, 'version': version}, idem)
+        return call(base + '/status/' + q(actor, safe=''), 'PUT', {'status': status, 'version': version})
     if command == 'tasks':
-        need(0); return client.request(base + '/tasks' + query([('owner', args.owner), ('status', args.status)]))
+        need(0); return call(base + '/tasks' + query([('owner', (args.owner or [None])[0]), ('status', args.status)]))
     if command == 'task':
-        need(1); return client.request(base + '/tasks/' + q(rest[0], safe=''))
+        need(1); return call(base + '/tasks/' + q(rest[0], safe=''))
+    if command == 'task-add':
+        need(1)
+        if not args.title:
+            raise ApiError('task-add needs --title.')
+        body = {'id': rest[0], 'title': args.title, 'owners': args.owner or []}
+        if args.depends:
+            body['depends'] = args.depends
+        if args.done_when:
+            body['done_when'] = args.done_when
+        return call(base + '/tasks', 'POST', body)
     if command == 'update-task':
         need(1)
         endpoint = base + '/tasks/' + q(rest[0], safe='')
@@ -226,64 +323,73 @@ def run_project(client, args):
             body['status'] = args.status
         if args.notes is not None:
             body['notes'] = args.notes
-        return client.request(endpoint, 'PATCH', body, idem)
+        return call(endpoint, 'PATCH', body)
     if command == 'messages':
-        need(0); return client.request(base + '/messages' + query([('since', args.since), ('thread', args.thread), ('to', args.to), ('task', args.task)]))
-    if command == 'send':
-        need(0)
-        if not args.to:
-            raise ApiError('send needs --to.')
+        need(0); return call(base + '/messages' + query([('since', args.since), ('thread', args.thread), ('to', args.to), ('task', args.task)]))
+    if command in ('send', 'edit-message'):
+        need(0 if command == 'send' else 1)
         if (args.body is None) == (args.file is None):
             raise ApiError('Choose exactly one of --body or --file.')
+        text = args.body if args.body is not None else read(args.file)
+        if command == 'edit-message':
+            return call(base + '/messages/' + q(rest[0], safe=''), 'PATCH', {'body': text})
+        if not args.to:
+            raise ApiError('send needs --to.')
         refs = []
         for item in args.ref or []:
             if ':' not in item or item.startswith(':'):
                 raise ApiError('--ref must be kind:id')
             kind, ref_id = item.split(':', 1)
             refs.append({'kind': kind, 'id': ref_id})
-        body = {'to': args.to, 'type': args.type or 'info', 'body': args.body if args.body is not None else read(args.file), 'refs': refs}
+        body = {'to': args.to, 'type': args.type or 'info', 'body': text, 'refs': refs}
         if args.task:
             body['task_id'] = args.task
         if args.thread:
             body['thread'] = args.thread
-        return client.request(base + '/messages', 'POST', body, idem)
+        return call(base + '/messages', 'POST', body)
     if command == 'handoffs':
-        need(0); return client.request(base + '/handoffs' + query([('task', args.task)]))
+        need(0); return call(base + '/handoffs' + query([('task', args.task)]))
     if command == 'handoff':
-        need(0); return client.request(base + '/handoffs', 'POST', json.loads(read(args.file)), idem)
+        need(0); return call(base + '/handoffs', 'POST', json.loads(read(args.file)))
     if command == 'decisions':
-        need(0); return client.request(base + '/decisions' + query([('status', args.status)]))
+        need(0); return call(base + '/decisions' + query([('status', args.status)]))
     if command == 'ask':
         need(0)
         body = {'question': args.question, 'options': args.option or [], 'recommendation': args.recommend or '', 'blocking': bool(args.blocking)}
         if args.task:
             body['task_id'] = args.task
-        return client.request(base + '/decisions', 'POST', body, idem)
-    if command in ('doc-get', 'memory-get'):
+        return call(base + '/decisions', 'POST', body)
+    if command == 'files':
+        if len(rest) > 1 or not project:
+            raise ApiError('Wrong number of arguments. Use --help.')
+        return call(base + '/files' + query([('path', rest[0] if rest else ''), ('recursive', '1' if args.recursive else None)]))
+    if command == 'file-get':
+        need(1); return call(base + '/files/content' + query([('path', rest[0])]))
+    if command == 'file-put':
+        need(1); return call(base + '/files/content', 'PUT', {'path': rest[0], 'content': text_of()})
+    if command == 'file-rm':
         need(1)
-        return client.request(base + ('/docs/' if command == 'doc-get' else '/memory/') + q(rest[0], safe='') + query([('version', args.version)]))
-    if command in ('doc-history', 'memory-history'):
+        if not args.confirm:
+            raise ApiError('Deletion requires --confirm.')
+        return call(base + '/files', 'DELETE', {'path': rest[0], 'confirm': True})
+    if command == 'upload':
+        if len(rest) < 2 or not project:
+            raise ApiError('Use: upload P DIR FILE...')
+        return client.upload(base + '/files/upload' + query([('path', rest[0])]), rest[1:], headers())
+    if command == 'download':
+        need(2)
+        return client.download(base + '/files/raw' + query([('path', rest[0])]), rest[1], headers())
+    if command == 'views':
+        need(0); return call(base + '/views')
+    if command == 'graph-get':
+        need(1); return call(base + '/views/' + q(rest[0], safe='') + '/graph' + query([('version', args.version)]))
+    if command == 'graph-push':
+        need(1); return call(base + '/views/' + q(rest[0], safe='') + '/graph', 'PUT', json.loads(read(args.file)))
+    if command == 'records-get':
         need(1)
-        return client.request(base + ('/docs/' if command == 'doc-history' else '/memory/') + q(rest[0], safe='') + '/history')
-    if command == 'doc-put':
-        need(1)
-        endpoint = base + '/docs/' + q(rest[0], safe='')
-        return client.request(endpoint, 'PUT', {'content': read(args.file), 'version': version_of(endpoint)}, idem)
-    if command == 'memory-put':
-        need(0)
-        endpoint = base + '/memory/' + q(my_actor(), safe='')
-        return client.request(endpoint, 'PUT', {'content': read(args.file), 'version': version_of(endpoint)}, idem)
-    if command == 'circuits':
-        need(0); return client.request(base + '/circuits')
-    if command == 'topology-get':
-        need(1); return client.request(base + '/circuits/' + q(rest[0], safe='') + '/topology' + query([('version', args.version)]))
-    if command == 'topology-push':
-        need(1); return client.request(base + '/circuits/' + q(rest[0], safe='') + '/topology', 'PUT', json.loads(read(args.file)), idem)
-    if command == 'results-get':
-        need(1)
-        path = '/results' if rest[0] == '-' else '/circuits/' + q(rest[0], safe='') + '/results'
-        return client.request(base + path + query([('since', args.since), ('task', args.task), ('metric', args.metric), ('candidate', args.candidate), ('status', args.status)]))
-    if command == 'results-push':
+        path = '/records' if rest[0] == '-' else '/views/' + q(rest[0], safe='') + '/records'
+        return call(base + path + query([('since', args.since), ('task', args.task), ('metric', args.metric), ('candidate', args.candidate), ('status', args.status)]))
+    if command == 'records-push':
         need(1)
         text = read(args.file)
         defaults = {}
@@ -293,21 +399,21 @@ def run_project(client, args):
             defaults['task_id'] = args.task
         if args.evidence:
             defaults['evidence_level'] = args.evidence
-        results = parse_results(text, args.file, defaults)
+        records = parse_results(text, args.file, defaults)
         digest = hashlib.sha256(text.encode('utf-8')).hexdigest()[:24]
         ids, count = [], 0
-        for batch, start in enumerate(range(0, len(results), 500)):
-            key = (args.idempotency_key + ':' + str(batch)) if args.idempotency_key else 'results:%s:%s:%d' % (rest[0], digest, batch)
-            reply = client.request(base + '/circuits/' + q(rest[0], safe='') + '/results', 'POST', {'results': results[start:start + 500]}, {'Idempotency-Key': key})
+        for batch, start in enumerate(range(0, len(records), 500)):
+            key = (args.idempotency_key + ':' + str(batch)) if args.idempotency_key else 'records:%s:%s:%d' % (rest[0], digest, batch)
+            reply = call(base + '/views/' + q(rest[0], safe='') + '/records', 'POST', {'records': records[start:start + 500]}, {'Idempotency-Key': key})
             ids.extend(reply['ids']); count += reply['count']
-        return {'circuit': rest[0], 'count': count, 'ids': ids}
+        return {'view': rest[0], 'count': count, 'ids': ids}
     if command == 'events':
         need(0)
         since = args.since
         if since is None and args.cursor_file and os.path.exists(args.cursor_file):
             since = read(args.cursor_file).strip()
         wait = float(args.wait) if args.wait else 0
-        result = client.request(base + '/events' + query([('since', since or '0'), ('wait', args.wait)]), timeout=wait + 30)
+        result = call(base + '/events' + query([('since', since or '0'), ('wait', args.wait)]), timeout=wait + 30)
         if args.cursor_file:
             folder = os.path.dirname(os.path.abspath(args.cursor_file))
             if not os.path.isdir(folder):
@@ -315,35 +421,41 @@ def run_project(client, args):
             with open(args.cursor_file, 'w') as handle:
                 handle.write(str(result['cursor']) + '\n')
         return result
+    if command == 'delete':
+        need(2)
+        if not args.confirm:
+            raise ApiError('Deletion requires --confirm.')
+        return call(base + '/' + q(rest[0], safe='') + '/' + q(rest[1], safe=''), 'DELETE', {'confirm': True})
     raise ApiError('Unknown project command. Use --help.')
 
 
 HELP = """ClipTalk minimal client (Python 3.6+, standard library only)
 Set CLIPTALK_URL and CLIPTALK_TOKEN_FILE (or CLIPTALK_TOKEN). Optional CLIPTALK_CA_FILE.
+Project commands act as the agent named by --as NAME or CLIPTALK_AGENT_NAME.
   cliptalk_min.py me
-  cliptalk_min.py project list
-  cliptalk_min.py project state P
-  cliptalk_min.py project status P
-  cliptalk_min.py project set-status P (--json '{...}' | --file F) [--version N]
-  cliptalk_min.py project tasks P [--owner A] [--status S]
-  cliptalk_min.py project task P ID
-  cliptalk_min.py project update-task P ID [--status S] [--notes T] [--version N]
+  cliptalk_min.py project list | state P | members P | member-set P NAME [--role T]
+  cliptalk_min.py project summary P (--text T | --file F)
+  cliptalk_min.py project modules P [--enable a,b] [--disable c] [--title T]
+  cliptalk_min.py project status P | set-status P (--json '{...}' | --file F) [--for NAME]
+  cliptalk_min.py project tasks P [--owner A] [--status S] | task P ID
+  cliptalk_min.py project task-add P ID --title T [--owner A ...] [--depends D] [--done-when T]
+  cliptalk_min.py project update-task P ID [--status S] [--notes T]
   cliptalk_min.py project messages P [--since ID] [--thread ID] [--to A] [--task ID]
   cliptalk_min.py project send P --to A (--body T | --file F) [--type T] [--task ID] [--thread ID] [--ref kind:id ...]
-  cliptalk_min.py project handoffs P [--task ID]
-  cliptalk_min.py project handoff P --file handoff.json
+  cliptalk_min.py project edit-message P ID (--body T | --file F)
+  cliptalk_min.py project handoffs P [--task ID] | handoff P --file handoff.json
   cliptalk_min.py project decisions P [--status open|answered]
   cliptalk_min.py project ask P --question Q [--option A ...] [--recommend R] [--blocking] [--task ID]
-  cliptalk_min.py project doc-get|doc-history P NAME     doc-put P NAME --file F [--version N]
-  cliptalk_min.py project memory-get|memory-history P ACTOR     memory-put P --file F [--version N]
-  cliptalk_min.py project circuits P
-  cliptalk_min.py project topology-get P CIRCUIT [--version N]
-  cliptalk_min.py project topology-push P CIRCUIT --file topology.json
-  cliptalk_min.py project results-get P CIRCUIT|- [--since ID] [--task ID] [--metric M] [--candidate C] [--status S]
-  cliptalk_min.py project results-push P CIRCUIT --file results.csv|.jsonl|.json [--candidate C] [--task ID] [--evidence L2]
+  cliptalk_min.py project files P [DIR] [--recursive] | file-get P PATH | file-put P PATH (--file F | --text T)
+  cliptalk_min.py project upload P DIR FILE... | download P PATH OUTPUT | file-rm P PATH --confirm
+  cliptalk_min.py project views P | graph-get P VIEW [--version N] | graph-push P VIEW --file graph.json
+  cliptalk_min.py project records-get P VIEW|- [--since ID] [--task ID] [--metric M] [--candidate C] [--status S]
+  cliptalk_min.py project records-push P VIEW --file data.csv|.jsonl|.json [--candidate C] [--task ID] [--evidence L]
   cliptalk_min.py project events P [--since N | --cursor-file F] [--wait SECONDS]
+  cliptalk_min.py project delete P KIND ID --confirm
 Writes accept --idempotency-key KEY. Output is JSON; errors go to stderr with exit code 1.
 HTTPS is required for remote hosts; localhost HTTP supports SSH tunnels. Redirects are refused.
+Read RULES.md and GUIDE.md in the project folder at the start of each session.
 """
 
 
@@ -351,13 +463,23 @@ def main(argv=None):
     parser = argparse.ArgumentParser(add_help=False)
     parser.add_argument('-h', '--help', action='store_true')
     parser.add_argument('args', nargs='*')
-    for name in ('json', 'file', 'version', 'owner', 'status', 'notes', 'since', 'thread', 'to', 'task', 'body', 'type', 'question',
-                 'recommend', 'metric', 'candidate', 'evidence', 'wait', 'cursor-file', 'idempotency-key'):
+    for name in ('json', 'file', 'version', 'status', 'notes', 'since', 'thread', 'to', 'task', 'body', 'type', 'question', 'text', 'role',
+                 'enable', 'disable', 'title', 'depends', 'done-when', 'recommend', 'metric', 'candidate', 'evidence', 'wait', 'cursor-file', 'idempotency-key'):
         parser.add_argument('--' + name)
+    parser.add_argument('--as', dest='as_name')
+    parser.add_argument('--for', dest='for_name')
+    parser.add_argument('--owner', action='append')
     parser.add_argument('--ref', action='append')
     parser.add_argument('--option', action='append')
     parser.add_argument('--blocking', action='store_true')
-    args = parser.parse_args(argv)
+    parser.add_argument('--recursive', action='store_true')
+    parser.add_argument('--confirm', action='store_true')
+    # Python 3.6 has no parse_intermixed_args: positionals after options come back as extras.
+    args, extra = parser.parse_known_args(argv)
+    unknown = [item for item in extra if item.startswith('-') and item != '-']
+    if unknown:
+        parser.error('unrecognized arguments: ' + ' '.join(unknown))
+    args.args = list(args.args) + extra
     if args.help or not args.args:
         sys.stdout.write(HELP)
         return 0

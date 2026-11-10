@@ -61,3 +61,10 @@ textarea{width:100%;min-height:120px;background:var(--input);border:1px solid va
 @media(max-width:900px){.circuit-layout,.text-layout{grid-template-columns:1fr}}
 @media(max-width:600px){.project-picker select{min-width:0;flex:1}.toolbar select,.toolbar input{min-width:0;width:100%}.toolbar .field{flex:1 1 140px}.kv{grid-template-columns:1fr}.kv dt{margin-top:6px}}
 #project-view{margin-top:16px}
+.section-head{display:flex;flex-wrap:wrap;gap:8px 16px;align-items:center;justify-content:space-between;margin-bottom:10px}.section-head h2,.section-head h3{margin:0;overflow-wrap:anywhere}
+.usage{display:flex;gap:8px;align-items:center}.usage progress{width:120px;height:8px;accent-color:var(--accent)}
+.preview-image{max-width:100%;border-radius:8px;border:1px solid var(--border)}
+.crumbs{display:flex;flex-wrap:wrap;gap:4px;align-items:center;margin-bottom:10px}.crumbs button{padding:3px 8px}
+.module-picks{display:flex;flex-wrap:wrap;gap:6px 16px}.module-picks label{display:flex;gap:6px;align-items:center;margin:0}.module-picks input{width:auto}
+.switch-row input[type=checkbox]+span{font-weight:600}
+.st-proposed,.st-approval{color:var(--warn)}.st-rejected{color:var(--fail)}

@@ -172,6 +172,7 @@ class WorkspaceStore {
 
   enforceQuota(owner, additionalBytes) {
     if (additionalBytes <= 0) return;
+    this.diskCheck?.(additionalBytes);
     const { usedBytes, quotaBytes } = this.storage(owner);
     if (usedBytes + additionalBytes + (this.pendingBytes?.(owner) || 0) > quotaBytes) fail('quota_exceeded', 413);
   }

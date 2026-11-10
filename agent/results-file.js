@@ -1,5 +1,5 @@
 'use strict';
-// Turns a CSV, JSONL or JSON file into circuit-result/v1 records.
+// Turns a CSV, JSONL or JSON file into record/v1 records.
 // CSV columns: candidate, task_id, case_id, node, metric, value, unit, status,
 // evidence_level, limit_op, limit_value, limit_ref, supersedes, cond.<name>,
 // run.<name>. Common condition names (corner, temp_C, vdd_V, rf_Hz, lo_Hz,
@@ -30,7 +30,7 @@ function parseCsv(text) {
 const number = value => value !== '' && Number.isFinite(Number(value)) ? Number(value) : value;
 
 function fromRow(row, defaults) {
-  const result = { schema: 'circuit-result/v1', ...defaults, conditions: { ...(defaults.conditions || {}) } };
+  const result = { schema: 'record/v1', ...defaults, conditions: { ...(defaults.conditions || {}) } };
   const limit = {}, run = { ...(defaults.run || {}) };
   for (const [key, raw] of Object.entries(row)) {
     const value = typeof raw === 'string' ? raw.trim() : raw;
@@ -53,12 +53,12 @@ function fromRow(row, defaults) {
 function parseResults(text, filename, defaults = {}) {
   const trimmed = text.trim();
   if (/\.jsonl$/i.test(filename) || (!/\.json$/i.test(filename) && trimmed.startsWith('{') && trimmed.includes('\n{'))) {
-    return trimmed.split(/\r?\n/).filter(line => line.trim()).map(line => ({ schema: 'circuit-result/v1', ...defaults, ...JSON.parse(line) }));
+    return trimmed.split(/\r?\n/).filter(line => line.trim()).map(line => ({ schema: 'record/v1', ...defaults, ...JSON.parse(line) }));
   }
   if (/\.json$/i.test(filename) || trimmed.startsWith('[') || trimmed.startsWith('{')) {
     const data = JSON.parse(trimmed), list = Array.isArray(data) ? data : data.results;
     if (!Array.isArray(list)) throw new Error('JSON must be an array or {"results": [...]}.');
-    return list.map(item => ({ schema: 'circuit-result/v1', ...defaults, ...item }));
+    return list.map(item => ({ schema: 'record/v1', ...defaults, ...item }));
   }
   const rows = parseCsv(text);
   if (rows.length < 2) throw new Error('CSV needs a header row and at least one data row.');

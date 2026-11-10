@@ -149,7 +149,9 @@
   [hidden] { display: none !important; }
   .account-label { color: var(--text); font-size: 12px; }
   #storage-usage { margin-left: auto; white-space: nowrap; }
-  #storage-progress { width: 90px; height: 8px; accent-color: var(--accent); }
+  #storage-progress, #disk-progress { width: 90px; height: 8px; accent-color: var(--accent); }
+  #disk-usage { white-space: nowrap; }
+  #disk-usage.low { color: var(--danger); }
   .workspace-note { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; padding: 6px 14px; color: var(--dim); border-bottom: 1px solid var(--border); font-size: 12px; }
   .small-btn { border: 1px solid var(--border); border-radius: 5px; background: var(--hover); color: var(--text); padding: 4px 8px; cursor: pointer; font-size: 12px; }
   .small-btn:hover { border-color: var(--accent); }
@@ -228,7 +230,7 @@
 </div>
 
 <div id="idle-notice" hidden><span data-t="connection.idle">长时间未操作，实时连接已断开。</span><button class="small-btn" id="resume-connection" data-t="connection.resume">恢复连接</button></div>
-<div class="workspace-note"><span data-t="workspace.account_note">工作区按账号独立，同一账号的所有设备实时同步。</span><span id="storage-usage" role="status"></span><progress id="storage-progress" max="100" value="0" aria-label="空间使用率"></progress></div>
+<div class="workspace-note"><span data-t="workspace.account_note">工作区按账号独立，同一账号的所有设备实时同步。</span><span id="storage-usage" role="status"></span><progress id="storage-progress" max="100" value="0" aria-label="空间使用率"></progress><span id="disk-usage" hidden></span><progress id="disk-progress" max="100" value="0" aria-label="服务器硬盘使用率" hidden></progress></div>
 <div class="main" id="main">
   <!-- 剪贴板 -->
   <div class="panel" id="panel-clipboard" data-panel="clipboard">
@@ -661,7 +663,24 @@ function jsonOptions(method, body) {
 function storageSize(bytes) {
   return bytes >= 1073741824 ? (bytes / 1073741824).toFixed(2) + ' GB' : (bytes / 1048576).toFixed(2) + ' MB';
 }
+// Server disk bar: administrators see capacity; everyone sees a warning when space runs low.
+var diskCheckedAt = 0;
+async function refreshDisk() {
+  if (Date.now() - diskCheckedAt < 10000) return;
+  diskCheckedAt = Date.now();
+  try {
+    var disk = await (await fetch('/api/disk')).json(), label = document.getElementById('disk-usage'), bar = document.getElementById('disk-progress');
+    label.classList.toggle('low', !!disk.low);
+    if (disk.totalBytes) {
+      label.textContent = t('workspace.disk') + ' ' + storageSize(disk.usedBytes) + ' / ' + storageSize(disk.totalBytes);
+      label.title = t('workspace.disk_hint').replace('{free}', storageSize(disk.freeBytes)).replace('{reserve}', storageSize(disk.reserveBytes));
+      bar.value = Math.min(100, disk.usedBytes / disk.totalBytes * 100); bar.hidden = false; label.hidden = false;
+    } else if (disk.low) { label.textContent = t('workspace.disk_low'); label.hidden = false; }
+    else label.hidden = true;
+  } catch (error) {}
+}
 function renderStorage(storage) {
+  refreshDisk();
   var usage = document.getElementById('storage-usage');
   usage.textContent = storageSize(storage.usedBytes) + ' / ' + storageSize(storage.quotaBytes);
   usage.title = t('workspace.storage_hint');

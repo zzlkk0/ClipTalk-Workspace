@@ -7,7 +7,7 @@ web page. It only reports; it never tries proxies, tunnels or other ways around
 network restrictions. The key is never printed.
 
   CLIPTALK_URL=https://example.org CLIPTALK_TOKEN_FILE=~/.config/cliptalk/token \\
-    python3 scripts/check-connectivity.py --project fyp [--write-test] [--json]
+    python3 scripts/check-connectivity.py --project demo [--write-test --as server1] [--json]
 """
 import argparse
 import datetime
@@ -34,6 +34,7 @@ def main():
     parser = argparse.ArgumentParser(description='ClipTalk connectivity check')
     parser.add_argument('--project', help='project ID to test reading (and writing with --write-test)')
     parser.add_argument('--write-test', action='store_true', help='post one test message to USER; delete it in the web page afterwards')
+    parser.add_argument('--as', dest='as_name', default=os.environ.get('CLIPTALK_AGENT_NAME', ''), help='agent name for --write-test (or CLIPTALK_AGENT_NAME)')
     parser.add_argument('--timeout', type=float, default=10)
     parser.add_argument('--json', action='store_true', help='print a JSON summary at the end')
     args = parser.parse_args()
@@ -94,13 +95,15 @@ def main():
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect(), urllib.request.HTTPSHandler(context=context))
     base = parts.scheme + '://' + parts.netloc
 
-    def call(path, method='GET', body=None, token=None):
+    def call(path, method='GET', body=None, token=None, agent=None):
         request = urllib.request.Request(base + path, data=None if body is None else json.dumps(body).encode('utf-8'), method=method)
         request.add_header('User-Agent', 'cliptalk-connectivity-check')
         if body is not None:
             request.add_header('Content-Type', 'application/json')
         if token:
             request.add_header('Authorization', 'Bearer ' + token)
+        if agent:
+            request.add_header('X-Agent-Name', agent)
         try:
             response = opener.open(request, timeout=args.timeout)
             return response.getcode(), json.loads(response.read().decode('utf-8') or 'null')
@@ -138,8 +141,8 @@ def main():
     if status != 200:
         record('auth', False, 'HTTP %d %s' % (status, me.get('error')))
         return finish()
-    record('auth', bool(me.get('actor')), 'key "%s", actor %s, scopes %s%s' % (me.get('keyName'), me.get('actor'), ', '.join(me.get('scopes', [])),
-                                                                             '' if me.get('actor') else ' (no actor: the key can only read projects)'))
+    record('auth', 'project:read' in me.get('scopes', []), 'key "%s", default agent name %s, scopes %s%s' % (me.get('keyName'), me.get('actor') or '(none; send --as / X-Agent-Name)', ', '.join(me.get('scopes', [])),
+                                                                                   '' if 'project:read' in me.get('scopes', []) else ' (add project:read and project:write to this key)'))
 
     if not args.project:
         record('project', None, 'skipped (pass --project ID)')
@@ -153,8 +156,12 @@ def main():
     if not args.write_test:
         record('write', None, 'skipped (pass --write-test to post one test message)')
         return finish()
-    body = {'to': 'USER', 'type': 'info', 'body': 'Connectivity check from %s at %s UTC. Safe to delete in the web page.' % (me.get('actor'), datetime.datetime.utcnow().strftime('%Y-%m-%d %H:%M'))}
-    status, message = call('/api/v1/projects/%s/messages' % urllib.parse.quote(args.project, safe=''), 'POST', body, token)
+    agent = args.as_name or me.get('actor')
+    if not agent:
+        record('write', False, 'pass --as NAME (or set CLIPTALK_AGENT_NAME) to write as an agent')
+        return finish()
+    body = {'to': 'USER', 'type': 'info', 'body': 'Connectivity check from %s at %s UTC. Safe to delete in the web page.' % (agent, datetime.datetime.utcnow().strftime('%Y-%m-%d %H:%M'))}
+    status, message = call('/api/v1/projects/%s/messages' % urllib.parse.quote(args.project, safe=''), 'POST', body, token, agent)
     record('write', status == 201, 'test message %s posted; delete it on the Messages tab' % message.get('id') if status == 201 else 'HTTP %d %s' % (status, message.get('error')))
     return finish()
 

@@ -7,8 +7,9 @@ RUN npm ci --omit=dev --no-audit --no-fund
 FROM node:22-bookworm-slim
 WORKDIR /app
 COPY --from=dependencies --chown=node:node /app/node_modules ./node_modules
-COPY --chown=node:node package.json server.js db.js workspace-store.js sharing-store.js quota-storage.js drive-store.js connection-policy.js agent-store.js agent-api.js project-store.js project-api.js content-guard.js docker-entrypoint.js ./
+COPY --chown=node:node package.json server.js db.js workspace-store.js sharing-store.js quota-storage.js drive-store.js connection-policy.js agent-store.js agent-api.js project-store.js project-api.js content-guard.js disk-guard.js docker-entrypoint.js ./
 COPY --chown=node:node agent ./agent
+COPY --chown=node:node project-templates ./project-templates
 COPY --chown=node:node scripts ./scripts
 COPY --chown=node:node public ./public
 COPY --chown=node:node i18n ./i18n
