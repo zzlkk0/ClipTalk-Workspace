@@ -133,7 +133,22 @@
         h('section', { class: 'card' }, h('h2', { text: T('switches') }), h('p', { class: 'hint', text: T('switches_hint') }), local.switches,
           h('form', { class: 'actions', onsubmit: event => { event.preventDefault(); if (!/^[A-Za-z0-9_.:-]{1,64}$/.test(switchName.value)) return ui.notice(T('invalid_switch'), true); action(addSwitch, async () => { await saveSwitches({ ...state.info.switches, [switchName.value]: true }); switchName.value = ''; }); } }, switchName, addSwitch))),
       h('section', { class: 'card' }, h('h2', { text: T('agent_prompt') }), h('p', { class: 'hint', text: T('agent_prompt_hint') }), prompt, h('div', { class: 'actions' }, h('button', { type: 'button', class: 'primary', text: T('copy_prompt'), onclick: () => copyText(prompt) }))),
-      h('section', { class: 'card' }, h('h2', { text: T('recent_events') }), local.events));
+      h('section', { class: 'card' }, h('h2', { text: T('recent_events') }), local.events),
+      dangerZone());
+    // Deleting a project is owner-only and asks for the project ID as confirmation.
+    function dangerZone() {
+      const withFiles = h('input', { type: 'checkbox', id: 'delete-project-files' });
+      const typed = h('input', { id: 'delete-project-id', autocomplete: 'off', placeholder: state.current, 'aria-label': T('delete_project_type').replace('{id}', state.current) });
+      const remove = h('button', { type: 'button', class: 'danger', text: T('delete_project'), disabled: true, onclick: () => action(remove, async () => {
+        if (typed.value.trim() !== state.current) throw new Error('confirmation_required');
+        await api(P(''), ui.json('DELETE', { confirm: true, deleteFiles: withFiles.checked }));
+        location.href = '/project.html';
+      }) });
+      typed.addEventListener('input', () => { remove.disabled = typed.value.trim() !== state.current; });
+      return h('section', { class: 'card danger-zone' }, h('h2', { text: T('delete_project') }), h('p', { class: 'hint', text: T('delete_project_hint') }),
+        h('label', { class: 'switch-row', for: 'delete-project-files' }, withFiles, h('span', { text: T('delete_project_files') })),
+        field(T('delete_project_type').replace('{id}', state.current), typed), h('div', { class: 'actions' }, remove));
+    }
     async function saveSwitches(switches) {
       try { await api(P('/switches'), ui.json('PUT', { switches, version: state.info.switches_version })); } finally { await refresh(true); }
     }

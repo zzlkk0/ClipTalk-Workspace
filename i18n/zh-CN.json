@@ -612,6 +612,10 @@
     "no_graph": "无图",
     "no_graph_hint": "这个查看项只有数据记录，还没有上传图。",
     "status_proposed": "待批准",
-    "status_rejected": "已拒绝"
+    "status_rejected": "已拒绝",
+    "delete_project": "删除项目",
+    "delete_project_hint": "删除这个项目的全部协同记录（成员、状态、任务、对话、交付、待决事项、查看数据）。默认保留网盘里的项目文件夹。此操作不能撤销。",
+    "delete_project_files": "同时删除网盘里的项目文件夹（RULES.md、GUIDE.md 和所有项目文件）",
+    "delete_project_type": "输入项目 ID「{id}」后才能删除"
   }
 }

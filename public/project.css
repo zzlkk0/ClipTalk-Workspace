@@ -68,3 +68,4 @@ textarea{width:100%;min-height:120px;background:var(--input);border:1px solid va
 .module-picks{display:flex;flex-wrap:wrap;gap:6px 16px}.module-picks label{display:flex;gap:6px;align-items:center;margin:0}.module-picks input{width:auto}
 .switch-row input[type=checkbox]+span{font-weight:600}
 .st-proposed,.st-approval{color:var(--warn)}.st-rejected{color:var(--fail)}
+.danger-zone{border-color:color-mix(in srgb,var(--danger) 45%,var(--border))}.danger-zone h2{color:var(--danger)}

@@ -612,6 +612,10 @@
     "no_graph": "no graph",
     "no_graph_hint": "This view has data records but no graph yet.",
     "status_proposed": "Awaiting approval",
-    "status_rejected": "Rejected"
+    "status_rejected": "Rejected",
+    "delete_project": "Delete project",
+    "delete_project_hint": "Deletes all collaboration records of this project (members, statuses, tasks, messages, handoffs, decisions, viewer data). The project folder in the drive is kept unless you tick the box below. This cannot be undone.",
+    "delete_project_files": "Also delete the project folder in the drive (RULES.md, GUIDE.md and all project files)",
+    "delete_project_type": "Type the project ID \"{id}\" to enable deletion"
   }
 }
