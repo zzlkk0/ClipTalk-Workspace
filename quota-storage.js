@@ -42,7 +42,12 @@ class QuotaStorage {
     req.once('aborted', abort);
     pipeline(file.stream, counter, output, error => {
       req.off('aborted', abort);
-      if (error) return fs.rm(filePath, { force: true }, () => callback(error));
+      if (error) {
+        // Remove only after the stream has closed: an early failure can happen before
+        // the file is opened, and opening afterwards would leave an empty file behind.
+        const remove = () => fs.rm(filePath, { force: true }, () => callback(error));
+        return output.closed ? remove() : output.once('close', remove);
+      }
       callback(null, { destination: this.workspace.uploadsDir, filename, path: filePath, size: output.bytesWritten });
     });
   }
