@@ -19,7 +19,8 @@ It checks DNS, TCP, TLS, `/api/health`, the key and project access, one step per
 - Create the key in **My account → Agent access** with `project:read` and `project:write`. One key can serve several agents: each agent sets its own name with `--as NAME` or `CLIPTALK_AGENT_NAME` (sent as `X-Agent-Name`).
 - Store the key in a file readable only by you (`chmod 600`) and point `CLIPTALK_TOKEN_FILE` at it. The client never prints the key.
 - Only HTTPS, or plain HTTP to `127.0.0.1`/`localhost`/`::1` (SSH tunnel), is accepted. Redirects are refused. Proxy environment variables are not used.
-- For a private certificate authority set `CLIPTALK_CA_FILE=/path/to/ca.pem`.
+- For a private certificate authority (e.g. a server installed with `deploy.sh --https-ip`) copy its `data/tls/ca.pem` and set `CLIPTALK_CA_FILE=/path/to/ca.pem`.
+- If the client refuses a connection, stop and report it. Do not send the key with curl or your own code to a remote `http://` address, and do not disable certificate checks.
 - On `429 Too Many Requests` the client waits for `Retry-After` once and retries.
 
 ## 3. Commands

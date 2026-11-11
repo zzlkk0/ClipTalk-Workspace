@@ -10,6 +10,7 @@ const {execFile,execFileSync}=require('node:child_process');
 const {promisify}=require('node:util');
 const run=promisify(execFile);
 const root=path.join(__dirname,'..');
+const hasOpenssl=(()=>{try{execFileSync('openssl',['version']);return true;}catch{return false;}})();
 function executable(file,text){fs.writeFileSync(file,text,{mode:0o755});}
 async function unusedPort(){
   const reservation=net.createServer();
@@ -36,7 +37,10 @@ test('installer options validate without touching packages or services',async()=
     const result=await run('bash',[path.join(root,'deploy.sh'),'--dry-run','--mode',mode,'--dir','/tmp/cliptalk-example','--port','18000']);
     assert.ok(result.stdout.includes('No files, packages, containers or services were changed.'));
   }
-  for(const options of [['--mode','bad'],['--port','0'],['--port','65536'],['--port','-1'],['--dir','/'],['--dir','/tmp/a b'],['--ref','../bad'],['--port']]) {
+  const secure=await run('bash',[path.join(root,'deploy.sh'),'--dry-run','--dir','/tmp/cliptalk-example','--port','13131','--https-ip','203.0.113.5']);
+  assert.ok(secure.stdout.includes('HTTPS on public port 13131; application HTTP on 127.0.0.1:13132 only'));
+  for(const options of [['--mode','bad'],['--port','0'],['--port','65536'],['--port','-1'],['--dir','/'],['--dir','/tmp/a b'],['--ref','../bad'],['--port'],
+    ['--https-ip','not an ip'],['--https-ip','1.2.3.4','--no-https'],['--https-ip','auto','--mode','docker'],['--internal-port','0'],['--https-ip','1.2.3.4','--port','18000','--internal-port','18000']]) {
     await assert.rejects(run('bash',[path.join(root,'deploy.sh'),'--dry-run',...options]));
   }
 });
@@ -321,4 +325,30 @@ elif command not in ['daemon-reload','enable']:raise RuntimeError('Unexpected se
     await new Promise(resolve=>setTimeout(resolve,50));
   }
   assert.equal(response?.status,200);
+  // HTTPS without a domain: the public port switches to HTTPS with a private CA,
+  // the application's HTTP moves to a loopback-only internal port, and updates keep it.
+  if(platform.manager!=='apt-get'||!hasOpenssl)return;
+  const internal=await unusedPort();
+  const secure=await run('bash',[...updateArgs,'--https-ip','127.0.0.1','--internal-port',String(internal)],{env:proxyEnv});
+  assert.ok(secure.stdout.includes('ClipTalk is ready on port '+changedPort+' with HTTPS'));
+  assert.ok(secure.stdout.includes('Created a private certificate authority'));
+  let config=JSON.parse(fs.readFileSync(configFile));
+  assert.equal(config.port,internal);assert.equal(config.https.port,changedPort);assert.equal(config.sessionSecret,secret);
+  assert.equal(fs.readFileSync(path.join(target,'.port'),'utf8').trim(),String(changedPort));
+  const ca=fs.readFileSync(path.join(target,'data','tls','ca.pem'),'utf8');
+  assert.equal(fs.existsSync(path.join(target,'data','tls','ca.key')),true);
+  const tls=require('node:tls');tls.setDefaultCACertificates([...tls.getCACertificates('default'),ca]);
+  assert.equal((await fetch('https://127.0.0.1:'+changedPort+'/api/health')).status,200);
+  assert.equal((await fetch('http://127.0.0.1:'+internal+'/api/health')).status,200);
+  await assert.rejects(fetch('http://127.0.0.1:'+changedPort+'/api/health'),'the public port no longer speaks plain HTTP');
+  assert.equal(accountsFingerprint(),expectedAccounts);
+  const kept=await run('bash',updateArgs,{env:proxyEnv});
+  assert.ok(kept.stdout.includes('with HTTPS'));assert.ok(kept.stdout.includes('Kept the existing HTTPS certificate'));
+  config=JSON.parse(fs.readFileSync(configFile));assert.equal(config.port,internal);assert.equal(config.https.port,changedPort);
+  assert.equal(fs.readFileSync(path.join(target,'data','tls','ca.pem'),'utf8'),ca,'updates keep the same CA');
+  const plain=await run('bash',[...updateArgs,'--no-https'],{env:proxyEnv});
+  assert.ok(plain.stdout.includes('ClipTalk is ready on port '+changedPort+'. Open http://'));
+  config=JSON.parse(fs.readFileSync(configFile));assert.equal(config.port,changedPort);assert.equal(config.https,undefined);
+  assert.equal((await fetch('http://127.0.0.1:'+changedPort+'/api/health')).status,200);
+  assert.equal(accountsFingerprint(),expectedAccounts);
 });

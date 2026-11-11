@@ -8,7 +8,7 @@ const { spawn } = require('node:child_process');
 const Database = require('better-sqlite3');
 const bcrypt = require('bcryptjs');
 
-async function startFixture(t, { legacy = true, builtinAdmin = false } = {}) {
+async function startFixture(t, { legacy = true, builtinAdmin = false, https = false } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cliptalk-api-'));
   fs.mkdirSync(path.join(dir, 'database')); fs.mkdirSync(path.join(dir, 'uploads'));
   const database = new Database(path.join(dir, 'database', 'users.db'));
@@ -34,17 +34,30 @@ async function startFixture(t, { legacy = true, builtinAdmin = false } = {}) {
   await new Promise(resolve => reservation.listen(0, '127.0.0.1', resolve));
   const port = reservation.address().port;
   await new Promise(resolve => reservation.close(resolve));
-  fs.writeFileSync(path.join(dir, 'config.json'), JSON.stringify({port,sessionSecret:crypto.randomBytes(32).toString('hex'),rateLimitMax:5000,maxLoginAttempts:100}));
+  const config = {port,sessionSecret:crypto.randomBytes(32).toString('hex'),rateLimitMax:5000,maxLoginAttempts:100};
+  let securePort = null;
+  if (https) {
+    // HTTPS on a second port with a private CA, as deploy.sh --https-ip sets up.
+    const reserve = net.createServer();
+    await new Promise(resolve => reserve.listen(0, '127.0.0.1', resolve));
+    securePort = reserve.address().port; await new Promise(resolve => reserve.close(resolve));
+    require('node:child_process').execFileSync('bash', [path.join(__dirname, '..', 'scripts', 'tls-ip-cert.sh'), path.join(dir, 'tls'), '127.0.0.1'], { stdio: 'ignore' });
+    config.https = { port: securePort, cert: path.join(dir, 'tls', 'server.crt'), key: path.join(dir, 'tls', 'server.key') };
+    const tls = require('node:tls');
+    tls.setDefaultCACertificates([...tls.getCACertificates('default'), fs.readFileSync(path.join(dir, 'tls', 'ca.pem'), 'utf8')]);
+  }
+  fs.writeFileSync(path.join(dir, 'config.json'), JSON.stringify(config));
   let logs = '';
   function launch() {
     const child = spawn(process.execPath, [path.join(__dirname, '..', 'server.js')], {
-    cwd:path.join(__dirname,'..'), env:{...process.env,CLIPTALK_DATA_DIR:dir,CLIPTALK_HOST:'127.0.0.1'}, stdio:['ignore','pipe','pipe'],
+    cwd:path.join(__dirname,'..'), env:{...process.env,CLIPTALK_DATA_DIR:dir,CLIPTALK_HOST:'127.0.0.1',CLIPTALK_HTTPS_HOST:'127.0.0.1'}, stdio:['ignore','pipe','pipe'],
     });
     child.stdout.on('data', data => { logs += data; }); child.stderr.on('data', data => { logs += data; });
     return child;
   }
   let child = launch();
-  const base = 'http://127.0.0.1:' + port;
+  const plainBase = 'http://127.0.0.1:' + port;
+  const base = securePort ? 'https://127.0.0.1:' + securePort : plainBase;
   t.after(async () => {
     if (child.exitCode === null) {
       child.kill('SIGTERM');
@@ -73,7 +86,7 @@ async function startFixture(t, { legacy = true, builtinAdmin = false } = {}) {
     if (result.status !== 200) throw new Error('Fixture login failed');
     return result.response.headers.getSetCookie()[0].split(';')[0];
   }
-  return {base,dir,password,request,login,restart,get child() { return child; }};
+  return {base,plainBase,securePort,dir,password,request,login,restart,get child() { return child; }};
 }
 function json(method,body) {return {method,headers:{'Content-Type':'application/json'},body:JSON.stringify(body)};}
 function macauDate() { return new Date(Date.now()+8*60*60*1000).toISOString().slice(0,10); }

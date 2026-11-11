@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const http = require('http');
+const https = require('https');
 const express = require('express');
 const session = require('express-session');
 const helmet = require('helmet');
@@ -47,6 +48,10 @@ const RELEASE = '20261111-projects2';
 // ── Express & HTTP ────────────────────────────
 const app = express();
 const server = http.createServer(app);
+// Optional HTTPS on the public port (config.https: {port, cert, key}). The plain
+// HTTP port then listens on loopback only, for health checks and SSH tunnels.
+const TLS = config.https && config.https.port ? config.https : null;
+const secureServer = TLS ? https.createServer({ cert: fs.readFileSync(TLS.cert), key: fs.readFileSync(TLS.key) }, app) : null;
 const { ConnectionPolicy } = require('./connection-policy');
 const connectionPolicy = new ConnectionPolicy(db);
 
@@ -683,9 +688,14 @@ app.use((error, req, res, next) => {
   res.status(status).json(status !== 500 && error.detail !== undefined ? { error: code, detail: error.detail } : { error: code });
 });
 
-const io = new Server(server, {
+const io = new Server(secureServer || server, {
   cors: { origin: false }, maxHttpBufferSize: 1e6, connectTimeout: 10000,
 });
+if (secureServer) {
+  // One realtime engine serves both the HTTPS port and the loopback HTTP port.
+  io.engine.attach(server, { path: '/socket.io' });
+  io.attachServe(server);
+}
 io.engine.use(sessionMiddleware);
 io.use((socket, next) => {
   const user = db.getUserById(socket.request.session?.userId || '');
@@ -742,10 +752,17 @@ io.on('connection', socket => {
   socket.on('refresh-files', () => socket.emit('files-updated', workspace.files(owner)));
 });
 
-server.listen(PORT, process.env.CLIPTALK_HOST || '0.0.0.0', () => {
-  console.log('ClipTalk ' + RELEASE + ' listening on port ' + PORT + ' (per-account workspaces)');
+const HTTP_HOST = process.env.CLIPTALK_HOST || (TLS ? '127.0.0.1' : '0.0.0.0');
+server.listen(PORT, HTTP_HOST, () => {
+  console.log('ClipTalk ' + RELEASE + ' listening on ' + HTTP_HOST + ':' + PORT + ' (HTTP)' + (TLS ? '' : ' (per-account workspaces)'));
 });
+if (secureServer) {
+  secureServer.listen(TLS.port, process.env.CLIPTALK_HTTPS_HOST || '0.0.0.0', () => {
+    console.log('ClipTalk HTTPS listening on port ' + TLS.port + '; plain HTTP is loopback-only on port ' + PORT);
+  });
+}
 process.on('SIGTERM', () => {
+  if (secureServer) server.close();
   io.close(() => { workspace.close(); process.exit(0); });
   setTimeout(() => process.exit(0), 4000).unref();
 });

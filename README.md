@@ -68,6 +68,24 @@ curl --noproxy '*' -fsS --max-time 5 http://127.0.0.1:8000/api/health
 
 Initial username: **admin**. A random initial password is printed only when a new administrator account is created. Read it in the first-start logs, then change it in the admin panel. Existing passwords are preserved during upgrades.
 
+### HTTPS without a domain (`--https-ip`)
+
+The native installer can switch the public port to HTTPS using a private certificate authority, so no domain or third-party service is needed:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/zzlkk0/ClipTalk-Workspace/main/deploy.sh \
+  | bash -s -- --https-ip auto        # or: --https-ip 47.x.x.x  (comma-separate several IPs)
+```
+
+- The existing public port (e.g. 13131) now serves **HTTPS only**; `http://IP:13131` stops working, so plain-HTTP requests with a key can no longer leave the server's network.
+- The application's plain HTTP moves to a **loopback-only** internal port (default: public port + 1, e.g. `127.0.0.1:13132`; choose with `--internal-port`). Health checks, SSH tunnels and agents on the server itself use it.
+- `auto` reads the public IP from the Alibaba Cloud metadata service and also adds the server's private IPs; otherwise pass the IP(s). Re-run with a different `--https-ip` after an IP change.
+- Files are kept in `data/tls/`: `ca.pem` (public — copy it to every client), `ca.key` (private — never copy it), `server.crt`/`server.key`. The server certificate lasts 825 days and is renewed automatically by any update run within 30 days of expiry; the CA lasts 10 years.
+- Later updates keep HTTPS without extra options. `--no-https` returns to plain HTTP on the same public port.
+- Security group: keep allowing the public port; do **not** open the internal port.
+
+On each client, copy `ca.pem` and set `CLIPTALK_URL=https://IP:PORT` and `CLIPTALK_CA_FILE=/path/to/ca.pem` (Node CLI/MCP need a recent Node.js 22/24 release for this; with an older one, start Node with `NODE_EXTRA_CA_CERTS=/path/to/ca.pem` instead). For browsers, import `ca.pem` as a trusted root certificate (Windows: certmgr → Trusted Root Certification Authorities; macOS: Keychain Access → System → set *Always Trust*; Linux: `update-ca-certificates` / `update-ca-trust`).
+
 On Alibaba Cloud ECS, allow inbound TCP traffic to the chosen port (8000 by default) in the instance's security group. If an OS firewall is enabled, allow the same port there. After a successful install, open `http://YOUR_PUBLIC_IP:8000/`. The installer does not change your security group or firewall rules.
 
 Preview installer settings without changing the server:

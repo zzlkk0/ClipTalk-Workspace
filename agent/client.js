@@ -13,6 +13,12 @@ class ClipTalkClient {
     this.token = env.CLIPTALK_TOKEN_FILE ? fs.readFileSync(env.CLIPTALK_TOKEN_FILE, 'utf8').trim() : (env.CLIPTALK_TOKEN || '').trim();
     if (!/^ct_[A-Za-z0-9_-]{43}$/.test(this.token)) throw new Error('Set CLIPTALK_TOKEN_FILE to a private key file, or set CLIPTALK_TOKEN.');
     this.localDir = env.CLIPTALK_LOCAL_DIR ? fs.realpathSync(env.CLIPTALK_LOCAL_DIR) : null;
+    // A private CA (e.g. the one created by deploy.sh --https-ip) is added to the default trust store.
+    if (env.CLIPTALK_CA_FILE) {
+      const tls = require('node:tls'), pem = fs.readFileSync(env.CLIPTALK_CA_FILE, 'utf8');
+      if (typeof tls.setDefaultCACertificates !== 'function') throw new Error('This Node.js version cannot load CLIPTALK_CA_FILE. Update Node.js 22/24, or start Node with NODE_EXTRA_CA_CERTS=' + env.CLIPTALK_CA_FILE);
+      tls.setDefaultCACertificates([...tls.getCACertificates('default'), pem]);
+    }
   }
   async request(endpoint, options = {}) {
     const response = await fetch(new URL('/api/v1' + endpoint, this.base), {
