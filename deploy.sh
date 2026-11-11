@@ -11,12 +11,14 @@ ref=main
 dry_run=0
 https_ips=''
 https_off=0
+public_http=''
 internal_port=''
 if [[ $(id -u) == 0 ]]; then install_dir=/opt/cliptalk-workspace; else install_dir="${HOME}/cliptalk-workspace"; fi
 usage() {
   cat <<'HELP'
 Usage: bash deploy.sh [--mode native|docker] [--port 8000] [--dir PATH] [--ref main] [--dry-run]
                       [--https-ip auto|IP[,IP...]] [--internal-port PORT] [--no-https]
+                      [--public-http | --no-public-http]
 
 Default: native Node.js + systemd, without Docker, on Ubuntu/Debian or Alibaba Cloud Linux 3.
 New installations use port 8000. Updates keep the existing port unless --port is supplied.
@@ -32,6 +34,9 @@ Cloud metadata service). The public --port then serves HTTPS only, and the
 application's plain HTTP moves to a loopback-only internal port (default: the
 public port + 1). Clients trust data/tls/ca.pem (CLIPTALK_CA_FILE). Later
 updates keep HTTPS automatically; --no-https turns it off again.
+--public-http also opens the internal plain HTTP port to the network for
+browsers; the agent API and key creation still refuse remote plain HTTP there.
+--no-public-http makes it loopback-only again. The choice is kept on updates.
 HELP
 }
 while (($#)); do
@@ -42,6 +47,8 @@ while (($#)); do
         --https-ip) https_ips=$2;; --internal-port) internal_port=$2;; esac
       shift 2;;
     --no-https) https_off=1; shift;;
+    --public-http) public_http=1; shift;;
+    --no-public-http) public_http=0; shift;;
     --dry-run) dry_run=1; shift;;
     --help|-h) usage; exit 0;;
     *) printf 'Unknown option: %s\n' "$1" >&2; exit 2;;
@@ -135,9 +142,15 @@ if ((https_enabled)); then
 else
   app_port=$port
 fi
+if [[ -n "$public_http" ]] && ((!https_enabled)); then
+  printf '%s needs HTTPS (--https-ip); without HTTPS the port is already plain HTTP.\n' "$( [[ "$public_http" == 1 ]] && printf -- --public-http || printf -- --no-public-http )" >&2; exit 2
+fi
 if ((dry_run)); then
   printf 'Plan only: mode=%s port=%s directory=%s ref=%s\n' "$mode" "$port" "$install_dir" "$ref"
-  if ((https_enabled)); then printf 'HTTPS on public port %s; application HTTP on 127.0.0.1:%s only; certificate addresses: %s\n' "$port" "$app_port" "${https_ips:-kept}"; fi
+  if ((https_enabled)); then
+    if [[ "$public_http" == 1 ]]; then printf 'HTTPS on public port %s; plain HTTP for browsers on port %s (agent API refused there); certificate addresses: %s\n' "$port" "$app_port" "${https_ips:-kept}"
+    else printf 'HTTPS on public port %s; application HTTP on 127.0.0.1:%s only; certificate addresses: %s\n' "$port" "$app_port" "${https_ips:-kept}"; fi
+  fi
   printf 'No files, packages, containers or services were changed.\n'
   exit 0
 fi
@@ -342,6 +355,7 @@ if [[ "$mode" == native ]]; then
     fi
     run_app bash "$release_dir/scripts/tls-ip-cert.sh" "$tls_dir" "$https_ips"
     tls_env=(CLIPTALK_HTTPS_PORT="$port" CLIPTALK_TLS_CERT="$tls_dir/server.crt" CLIPTALK_TLS_KEY="$tls_dir/server.key")
+    if [[ -n "$public_http" ]]; then tls_env+=(CLIPTALK_HTTP_PUBLIC="$public_http"); fi
   elif ((https_off)); then tls_env=(CLIPTALK_HTTPS_OFF=1); fi
   run_app env CLIPTALK_DATA_DIR="$install_dir/data" CLIPTALK_PORT="$app_port" ${tls_env[@]+"${tls_env[@]}"} "$node_bin/node" "$release_dir/scripts/init-config.js"
   # Ports below 1024 (e.g. 443) need this capability for the unprivileged service account.
@@ -403,7 +417,11 @@ activated=0
 if ((https_enabled)); then
   first_ip=${https_ips%%,*}
   printf '\nClipTalk is ready on port %s with HTTPS. Open https://%s:%s/\n' "$port" "$first_ip" "$port"
-  printf 'Plain HTTP now listens only on 127.0.0.1:%s (health checks, SSH tunnels, agents on this server).\n' "$app_port"
+  if grep -q '"httpPublic": true' "$install_dir/data/config.json" 2>/dev/null; then
+    printf 'Plain HTTP for browsers: http://%s:%s/ (allow this port in the security group). Agent API calls and key creation are refused there; agents must use HTTPS.\n' "$first_ip" "$app_port"
+  else
+    printf 'Plain HTTP now listens only on 127.0.0.1:%s (health checks, SSH tunnels, agents on this server).\n' "$app_port"
+  fi
   printf 'Certificate authority to trust on every client: %s/data/tls/ca.pem (public; never copy ca.key).\n' "$install_dir"
   printf 'Agents: CLIPTALK_URL=https://%s:%s CLIPTALK_CA_FILE=/path/to/ca.pem. Browsers: import ca.pem as a trusted root.\n' "$first_ip" "$port"
 else

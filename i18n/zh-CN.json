@@ -261,7 +261,8 @@
     "invalid_view": "查看项名称无效",
     "invalid_graph": "图格式不正确",
     "invalid_record": "记录格式不正确",
-    "file_too_large_for_text": "文件太大，不能作为文本打开"
+    "file_too_large_for_text": "文件太大，不能作为文本打开",
+    "https_required": "这个明文 HTTP 地址不能用于 Agent API 或创建密钥，请改用 HTTPS 地址"
   },
   "account": {
     "title": "我的账号",

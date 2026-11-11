@@ -83,6 +83,7 @@ curl -fsSL https://raw.githubusercontent.com/zzlkk0/ClipTalk-Workspace/main/depl
 - Files are kept in `data/tls/`: `ca.pem` (public — copy it to every client), `ca.key` (private — never copy it), `server.crt`/`server.key`. The server certificate lasts 825 days and is renewed automatically by any update run within 30 days of expiry; the CA lasts 10 years.
 - Later updates keep HTTPS without extra options. `--no-https` returns to plain HTTP on the same public port.
 - Security group: keep allowing the public port; do **not** open the internal port.
+- Optional `--public-http`: also open the internal plain HTTP port to the network, so browsers can use `http://IP:13132/` without importing the certificate. On that port the agent API (`/api/v1`) and key creation are refused for anything but the server itself (`403 https_required`), so keys still travel only over HTTPS. Browser passwords and session cookies on that port are unencrypted; prefer HTTPS where you can. Allow the port in the security group. `--no-public-http` closes it again; the choice is kept on updates.
 
 On each client, copy `ca.pem` and set `CLIPTALK_URL=https://IP:PORT` and `CLIPTALK_CA_FILE=/path/to/ca.pem` (Node CLI/MCP need a recent Node.js 22/24 release for this; with an older one, start Node with `NODE_EXTRA_CA_CERTS=/path/to/ca.pem` instead). For browsers, import `ca.pem` as a trusted root certificate (Windows: certmgr → Trusted Root Certification Authorities; macOS: Keychain Access → System → set *Always Trust*; Linux: `update-ca-certificates` / `update-ca-trust`).
 

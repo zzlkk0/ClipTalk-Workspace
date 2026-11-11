@@ -8,7 +8,7 @@ const { spawn } = require('node:child_process');
 const Database = require('better-sqlite3');
 const bcrypt = require('bcryptjs');
 
-async function startFixture(t, { legacy = true, builtinAdmin = false, https = false } = {}) {
+async function startFixture(t, { legacy = true, builtinAdmin = false, https = false, httpPublic = false } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cliptalk-api-'));
   fs.mkdirSync(path.join(dir, 'database')); fs.mkdirSync(path.join(dir, 'uploads'));
   const database = new Database(path.join(dir, 'database', 'users.db'));
@@ -43,6 +43,7 @@ async function startFixture(t, { legacy = true, builtinAdmin = false, https = fa
     securePort = reserve.address().port; await new Promise(resolve => reserve.close(resolve));
     require('node:child_process').execFileSync('bash', [path.join(__dirname, '..', 'scripts', 'tls-ip-cert.sh'), path.join(dir, 'tls'), '127.0.0.1'], { stdio: 'ignore' });
     config.https = { port: securePort, cert: path.join(dir, 'tls', 'server.crt'), key: path.join(dir, 'tls', 'server.key') };
+    if (httpPublic) config.httpPublic = true;
     const tls = require('node:tls');
     tls.setDefaultCACertificates([...tls.getCACertificates('default'), fs.readFileSync(path.join(dir, 'tls', 'ca.pem'), 'utf8')]);
   }
@@ -50,7 +51,7 @@ async function startFixture(t, { legacy = true, builtinAdmin = false, https = fa
   let logs = '';
   function launch() {
     const child = spawn(process.execPath, [path.join(__dirname, '..', 'server.js')], {
-    cwd:path.join(__dirname,'..'), env:{...process.env,CLIPTALK_DATA_DIR:dir,CLIPTALK_HOST:'127.0.0.1',CLIPTALK_HTTPS_HOST:'127.0.0.1'}, stdio:['ignore','pipe','pipe'],
+    cwd:path.join(__dirname,'..'), env:{...process.env,CLIPTALK_DATA_DIR:dir,...(httpPublic?{}:{CLIPTALK_HOST:'127.0.0.1'}),CLIPTALK_HTTPS_HOST:'127.0.0.1'}, stdio:['ignore','pipe','pipe'],
     });
     child.stdout.on('data', data => { logs += data; }); child.stderr.on('data', data => { logs += data; });
     return child;

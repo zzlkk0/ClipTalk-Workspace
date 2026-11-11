@@ -39,3 +39,24 @@ test('HTTPS on the public port with a private CA; plain HTTP stays on loopback',
     socket.disconnect();
   }
 });
+
+test('public plain HTTP for browsers refuses the agent API and key creation from other hosts', { skip: hasOpenssl ? false : 'openssl is not installed' }, async t => {
+  const f = await startFixture(t, { legacy: false, https: true, httpPublic: true });
+  const cookie = await f.login('alice');
+  const key = (await f.request('/api/agent-keys', cookie, json('POST', { label: 'tls', scopes: ['clipboard:read'], currentPassword: f.password }))).data;
+  const port = new URL(f.plainBase).port, bearer = { Authorization: 'Bearer ' + key.token };
+  // From this server itself the plain port keeps working, including the agent API.
+  assert.equal((await fetch(f.plainBase + '/api/v1/me', { headers: bearer })).status, 200);
+  // From another address (this machine's network IP) browsing works, keys do not.
+  const address = Object.values(require('node:os').networkInterfaces()).flat().find(item => item && item.family === 'IPv4' && !item.internal)?.address;
+  if (!address) return t.skip('no non-loopback network interface');
+  const remote = 'http://' + address + ':' + port;
+  assert.equal((await fetch(remote + '/api/health')).status, 200);
+  assert.equal((await fetch(remote + '/login.html')).status, 200);
+  const refused = await fetch(remote + '/api/v1/me', { headers: bearer });
+  assert.equal(refused.status, 403); assert.equal((await refused.json()).error, 'https_required');
+  const create = await fetch(remote + '/api/agent-keys', { method: 'POST', headers: { Cookie: cookie, 'Content-Type': 'application/json' }, body: JSON.stringify({ label: 'x', scopes: ['clipboard:read'], currentPassword: f.password }) });
+  assert.equal(create.status, 403);
+  assert.equal((await fetch(remote + '/api/agent-keys', { headers: { Cookie: cookie } })).status, 200, 'listing keys (no secret) still works');
+  assert.equal((await fetch('https://' + '127.0.0.1:' + f.securePort + '/api/v1/me', { headers: bearer })).status, 200, 'agents use HTTPS');
+});

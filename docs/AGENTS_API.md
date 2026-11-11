@@ -6,7 +6,7 @@ An agent can use the same account's web clipboard and personal drive without ope
 
 The included CLI, MCP adapter and Python client accept HTTPS, or HTTP on `127.0.0.1`, `localhost` and `::1`. They reject remote plaintext HTTP and do not follow redirects with a credential. **Never work around this by sending a key to a remote `http://` address with curl or custom code, and never disable certificate checks.**
 
-**HTTPS without a domain:** run the installer with `--https-ip auto` (see README, “HTTPS without a domain”). Then use `CLIPTALK_URL=https://SERVER_IP:PORT` and `CLIPTALK_CA_FILE=/path/to/ca.pem` (the server's `data/tls/ca.pem`; with an older Node.js 22 use `NODE_EXTRA_CA_CERTS` instead).
+**HTTPS without a domain:** run the installer with `--https-ip auto` (see README, “HTTPS without a domain”). Then use `CLIPTALK_URL=https://SERVER_IP:PORT` and `CLIPTALK_CA_FILE=/path/to/ca.pem` (the server's `data/tls/ca.pem`; with an older Node.js 22 use `NODE_EXTRA_CA_CERTS` instead). If the server also opens plain HTTP for browsers (`--public-http`), that port refuses agent API calls and key creation from other hosts with `403 https_required`; always use the HTTPS address.
 
 Alternatively, without HTTPS, open an SSH tunnel **on the computer running the agent**. Replace the SSH user, server address and final port with your deployment:
 

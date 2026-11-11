@@ -51,6 +51,8 @@ const server = http.createServer(app);
 // Optional HTTPS on the public port (config.https: {port, cert, key}). The plain
 // HTTP port then listens on loopback only, for health checks and SSH tunnels.
 const TLS = config.https && config.https.port ? config.https : null;
+// With HTTPS, the plain port is loopback-only unless config.httpPublic opens it for browsers.
+const HTTP_PUBLIC = !!(TLS && config.httpPublic);
 const secureServer = TLS ? https.createServer({ cert: fs.readFileSync(TLS.cert), key: fs.readFileSync(TLS.key) }, app) : null;
 const { ConnectionPolicy } = require('./connection-policy');
 const connectionPolicy = new ConnectionPolicy(db);
@@ -76,6 +78,17 @@ app.use(helmet({
   crossOriginEmbedderPolicy: false,
   referrerPolicy: { policy: 'no-referrer' },
 }));
+
+// When HTTPS is configured, API keys never travel over remote plain HTTP: the
+// agent API and key creation answer only over HTTPS or from this server itself.
+const LOOPBACK = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
+app.use((req, res, next) => {
+  if (TLS && !req.socket.encrypted && !LOOPBACK.has(req.socket.remoteAddress)
+    && (req.path.startsWith('/api/v1/') || req.path === '/api/v1' || (req.path === '/api/agent-keys' && req.method === 'POST'))) {
+    return res.status(403).json({ error: 'https_required', detail: { https_port: TLS.port } });
+  }
+  next();
+});
 
 // Let Express choose the content type for HTML, JSON, scripts and downloads.
 app.use((req, res, next) => {
@@ -752,13 +765,13 @@ io.on('connection', socket => {
   socket.on('refresh-files', () => socket.emit('files-updated', workspace.files(owner)));
 });
 
-const HTTP_HOST = process.env.CLIPTALK_HOST || (TLS ? '127.0.0.1' : '0.0.0.0');
+const HTTP_HOST = process.env.CLIPTALK_HOST || (TLS && !HTTP_PUBLIC ? '127.0.0.1' : '0.0.0.0');
 server.listen(PORT, HTTP_HOST, () => {
   console.log('ClipTalk ' + RELEASE + ' listening on ' + HTTP_HOST + ':' + PORT + ' (HTTP)' + (TLS ? '' : ' (per-account workspaces)'));
 });
 if (secureServer) {
   secureServer.listen(TLS.port, process.env.CLIPTALK_HTTPS_HOST || '0.0.0.0', () => {
-    console.log('ClipTalk HTTPS listening on port ' + TLS.port + '; plain HTTP is loopback-only on port ' + PORT);
+    console.log('ClipTalk HTTPS listening on port ' + TLS.port + '; plain HTTP on port ' + PORT + (HTTP_PUBLIC ? ' is open for browsers (agent API refused there)' : ' is loopback-only'));
   });
 }
 process.on('SIGTERM', () => {

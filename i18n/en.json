@@ -261,7 +261,8 @@
     "invalid_view": "Invalid view name",
     "invalid_graph": "Invalid graph",
     "invalid_record": "Invalid record",
-    "file_too_large_for_text": "The file is too large to open as text"
+    "file_too_large_for_text": "The file is too large to open as text",
+    "https_required": "Agent API calls and key creation need the HTTPS address, not this plain HTTP one"
   },
   "account": {
     "title": "My account",

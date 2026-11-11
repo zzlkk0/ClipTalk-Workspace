@@ -40,7 +40,7 @@ test('installer options validate without touching packages or services',async()=
   const secure=await run('bash',[path.join(root,'deploy.sh'),'--dry-run','--dir','/tmp/cliptalk-example','--port','13131','--https-ip','203.0.113.5']);
   assert.ok(secure.stdout.includes('HTTPS on public port 13131; application HTTP on 127.0.0.1:13132 only'));
   for(const options of [['--mode','bad'],['--port','0'],['--port','65536'],['--port','-1'],['--dir','/'],['--dir','/tmp/a b'],['--ref','../bad'],['--port'],
-    ['--https-ip','not an ip'],['--https-ip','1.2.3.4','--no-https'],['--https-ip','auto','--mode','docker'],['--internal-port','0'],['--https-ip','1.2.3.4','--port','18000','--internal-port','18000']]) {
+    ['--https-ip','not an ip'],['--https-ip','1.2.3.4','--no-https'],['--https-ip','auto','--mode','docker'],['--internal-port','0'],['--https-ip','1.2.3.4','--port','18000','--internal-port','18000'],['--public-http']]) {
     await assert.rejects(run('bash',[path.join(root,'deploy.sh'),'--dry-run',...options]));
   }
 });
@@ -342,13 +342,17 @@ elif command not in ['daemon-reload','enable']:raise RuntimeError('Unexpected se
   assert.equal((await fetch('http://127.0.0.1:'+internal+'/api/health')).status,200);
   await assert.rejects(fetch('http://127.0.0.1:'+changedPort+'/api/health'),'the public port no longer speaks plain HTTP');
   assert.equal(accountsFingerprint(),expectedAccounts);
-  const kept=await run('bash',updateArgs,{env:proxyEnv});
+  const kept=await run('bash',[...updateArgs,'--public-http'],{env:proxyEnv});
   assert.ok(kept.stdout.includes('with HTTPS'));assert.ok(kept.stdout.includes('Kept the existing HTTPS certificate'));
-  config=JSON.parse(fs.readFileSync(configFile));assert.equal(config.port,internal);assert.equal(config.https.port,changedPort);
+  assert.ok(kept.stdout.includes('Plain HTTP for browsers: http://127.0.0.1:'+internal));
+  config=JSON.parse(fs.readFileSync(configFile));assert.equal(config.port,internal);assert.equal(config.https.port,changedPort);assert.equal(config.httpPublic,true);
+  assert.equal(JSON.parse(fs.readFileSync(configFile)).httpPublic,true);
+  const again=await run('bash',updateArgs,{env:proxyEnv});
+  assert.ok(again.stdout.includes('Plain HTTP for browsers'),'the choice is kept on updates');
   assert.equal(fs.readFileSync(path.join(target,'data','tls','ca.pem'),'utf8'),ca,'updates keep the same CA');
   const plain=await run('bash',[...updateArgs,'--no-https'],{env:proxyEnv});
   assert.ok(plain.stdout.includes('ClipTalk is ready on port '+changedPort+'. Open http://'));
-  config=JSON.parse(fs.readFileSync(configFile));assert.equal(config.port,changedPort);assert.equal(config.https,undefined);
+  config=JSON.parse(fs.readFileSync(configFile));assert.equal(config.port,changedPort);assert.equal(config.https,undefined);assert.equal(config.httpPublic,undefined);
   assert.equal((await fetch('http://127.0.0.1:'+changedPort+'/api/health')).status,200);
   assert.equal(accountsFingerprint(),expectedAccounts);
 });
