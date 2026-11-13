@@ -167,6 +167,9 @@ class ProjectStore {
     add('project_decisions', 'kind', "TEXT NOT NULL DEFAULT 'question'");
     add('project_decisions', 'ref', 'TEXT');
     add('project_decisions', 'edited_at', 'INTEGER');
+    // Proxy answers: an agent may answer on the owner's behalf; the owner confirms or overrides.
+    add('project_decisions', 'answered_by', 'TEXT');
+    add('project_decisions', 'confirmed_at', 'INTEGER');
     workspace.extraTextBytes = owner => this.textBytes(owner);
     (workspace.accountCleanup ||= []).push(owner => this.deleteOwner(owner));
   }
@@ -283,7 +286,8 @@ class ProjectStore {
     const project = this.project(owner, slug);
     const statuses = {};
     for (const row of this.db.prepare('SELECT * FROM project_status WHERE project_id = ? ORDER BY actor').all(project.id)) statuses[row.actor] = this.statusOut(row);
-    const decisions = this.db.prepare("SELECT COUNT(*) n, COALESCE(SUM(blocking), 0) b FROM project_decisions WHERE project_id = ? AND status = 'open'").get(project.id);
+    const decisions = this.db.prepare(`SELECT COALESCE(SUM(status IN ('open', 'proxy')), 0) n, COALESCE(SUM(status = 'open' AND blocking), 0) b,
+      COALESCE(SUM(status = 'proxy'), 0) p FROM project_decisions WHERE project_id = ?`).get(project.id);
     const tasks = {};
     for (const row of this.db.prepare('SELECT status, COUNT(*) n FROM project_tasks WHERE project_id = ? GROUP BY status').all(project.id)) tasks[row.status] = row.n;
     return {
@@ -292,7 +296,7 @@ class ProjectStore {
       summary: { text: project.summary, version: project.summary_version, updated_at: iso(project.summary_updated_at), updated_by: project.summary_updated_by },
       members: this.members(owner, slug).members,
       switches: JSON.parse(project.switches), switches_version: project.switches_version, statuses,
-      open_decisions: decisions.n, blocking_decisions: decisions.b, tasks, usage: this.projectUsage(owner),
+      open_decisions: decisions.n, blocking_decisions: decisions.b, proxy_decisions: decisions.p, tasks, usage: this.projectUsage(owner),
       cursor: this.db.prepare('SELECT COALESCE(MAX(id), 0) n FROM project_events WHERE project_id = ?').get(project.id).n,
     };
   }
@@ -637,16 +641,23 @@ class ProjectStore {
     }, 'handoffs');
   }
 
-  // ─── Decisions (only the owner answers) ───────
+  // ─── Decisions ────────────────────────────────
+  // status: open → (agent proxy answer) proxy → (owner confirms or overrides) answered.
+  // The owner can also answer directly while open. Once answered, only the owner changes it.
   decisionOut(row) {
     return { id: pubId('decision', row.id), kind: row.kind || 'question', ref: row.ref, raised_by: row.raised_by, task_id: row.task_id, question: row.question,
       options: JSON.parse(row.options), recommendation: row.recommendation, blocking: !!row.blocking, status: row.status, answer: row.answer,
-      answered_at: iso(row.answered_at), created_at: iso(row.created_at), edited_at: iso(row.edited_at) };
+      answered_by: row.answered_by || (row.status === 'answered' ? 'USER' : null), proxy: !!row.answered_by && row.answered_by !== 'USER',
+      answered_at: iso(row.answered_at), confirmed_at: iso(row.confirmed_at), created_at: iso(row.created_at), edited_at: iso(row.edited_at) };
   }
   decisions(owner, slug, query = {}) {
     const project = this.project(owner, slug);
     const params = { project: project.id }; let where = 'project_id = @project';
-    if (query.status) { if (!['open', 'answered'].includes(query.status)) fail('invalid_status_filter'); where += ' AND status = @status'; params.status = query.status; }
+    if (query.status) {
+      if (!['open', 'proxy', 'answered', 'pending'].includes(query.status)) fail('invalid_status_filter');
+      // pending = still waiting for the owner (open or proxy-answered)
+      where += query.status === 'pending' ? " AND status IN ('open', 'proxy')" : ' AND status = @status'; params.status = query.status;
+    }
     if (query.task) { where += ' AND task_id = @task'; params.task = String(query.task); }
     return { decisions: this.db.prepare(`SELECT * FROM project_decisions WHERE ${where} ORDER BY blocking DESC, id DESC LIMIT 500`).all(params).map(row => this.decisionOut(row)) };
   }
@@ -693,25 +704,56 @@ class ProjectStore {
       return this.decisionOut(this.db.prepare('SELECT * FROM project_decisions WHERE id = ?').get(row.id));
     }, 'decisions');
   }
+  // A task-approval answer moves the task to todo (approve) or rejected (anything else).
+  applyTaskApproval(project, who, row, answer, by) {
+    if (row.kind !== 'approve_task' || !row.ref) return;
+    const approved = /^\s*(approve|批准|同意|yes|ok)/i.test(answer);
+    const task = this.db.prepare('SELECT * FROM project_tasks WHERE project_id = ? AND task_id = ?').get(project.id, row.ref);
+    if (task && ['proposed', 'rejected', 'todo'].includes(task.status)) {
+      this.db.prepare('UPDATE project_tasks SET status = ?, version = version + 1, updated_at = ?, updated_by = ? WHERE project_id = ? AND task_id = ?').run(approved ? 'todo' : 'rejected', Date.now(), by, project.id, row.ref);
+      this.event(project, who, 'task', row.ref, row.ref + ' ' + (approved ? 'approved' : 'rejected') + (by === 'USER' ? '' : ' (proxy ' + by + ')'));
+    }
+  }
+  // Whether an agent's proxy answer to a task approval takes effect before the owner confirms it.
+  // Default: no. A proxy approval only records the answer; the task starts after the owner confirms.
+  proxyAppliesToTask(row, by) {
+    return false;
+  }
+  // Owner: final answer (also overrides a proxy answer). Agent: proxy answer, shown
+  // as such until the owner confirms or overrides it.
   answerDecision(who, slug, id, input) {
-    this.requireUser(who);
     if (!isObject(input)) fail('invalid_answer');
     const answer = text(input.answer, 8000, 'invalid_answer');
     this.scan(answer);
+    return this.write(who, slug, (project, by) => {
+      const row = this.db.prepare('SELECT * FROM project_decisions WHERE project_id = ? AND id = ?').get(project.id, parseId('decision', id));
+      if (!row) fail('not_found', 404);
+      this.quota(who.owner, bytes(answer) - bytes(row.answer || ''));
+      const now = Date.now();
+      if (who.kind === 'user') {
+        this.db.prepare("UPDATE project_decisions SET status = 'answered', answer = ?, answered_by = 'USER', answered_at = ?, confirmed_at = ? WHERE id = ?").run(answer, now, now, row.id);
+        this.applyTaskApproval(project, who, row, answer, 'USER');
+        this.event(project, who, 'decision', pubId('decision', row.id), row.status === 'proxy' ? 'USER overrode the proxy answer of ' + row.answered_by : 'USER answered');
+      } else {
+        if (row.status === 'answered') fail('decision_answered', 409);
+        if (row.raised_by === by && row.kind === 'approve_task') fail('approval_required', 403); // nobody approves their own proposal
+        this.db.prepare("UPDATE project_decisions SET status = 'proxy', answer = ?, answered_by = ?, answered_at = ?, confirmed_at = NULL WHERE id = ?").run(answer, by, now, row.id);
+        if (this.proxyAppliesToTask(row, by)) this.applyTaskApproval(project, who, row, answer, by);
+        this.event(project, who, 'decision', pubId('decision', row.id), by + ' answered as proxy (awaiting USER)');
+      }
+      return this.decisionOut(this.db.prepare('SELECT * FROM project_decisions WHERE id = ?').get(row.id));
+    }, who.kind === 'user' ? undefined : 'decisions');
+  }
+  // Owner keeps a proxy answer as the final one.
+  confirmDecision(who, slug, id) {
+    this.requireUser(who);
     return this.write(who, slug, project => {
       const row = this.db.prepare('SELECT * FROM project_decisions WHERE project_id = ? AND id = ?').get(project.id, parseId('decision', id));
       if (!row) fail('not_found', 404);
-      this.quota(who.owner, bytes(answer));
-      this.db.prepare("UPDATE project_decisions SET status = 'answered', answer = ?, answered_at = ? WHERE id = ?").run(answer, Date.now(), row.id);
-      if (row.kind === 'approve_task' && row.ref) {
-        const approved = /^\s*(approve|批准|同意|yes|ok)/i.test(answer);
-        const task = this.db.prepare('SELECT * FROM project_tasks WHERE project_id = ? AND task_id = ?').get(project.id, row.ref);
-        if (task && ['proposed', 'rejected', 'todo'].includes(task.status)) {
-          this.db.prepare("UPDATE project_tasks SET status = ?, version = version + 1, updated_at = ?, updated_by = 'USER' WHERE project_id = ? AND task_id = ?").run(approved ? 'todo' : 'rejected', Date.now(), project.id, row.ref);
-          this.event(project, who, 'task', row.ref, row.ref + ' ' + (approved ? 'approved' : 'rejected'));
-        }
-      }
-      this.event(project, who, 'decision', pubId('decision', row.id), 'USER answered');
+      if (row.status !== 'proxy') fail('nothing_to_confirm', 409);
+      this.db.prepare("UPDATE project_decisions SET status = 'answered', confirmed_at = ? WHERE id = ?").run(Date.now(), row.id);
+      if (!this.proxyAppliesToTask(row, row.answered_by)) this.applyTaskApproval(project, who, row, row.answer, 'USER');
+      this.event(project, who, 'decision', pubId('decision', row.id), 'USER confirmed the proxy answer of ' + row.answered_by);
       return this.decisionOut(this.db.prepare('SELECT * FROM project_decisions WHERE id = ?').get(row.id));
     });
   }

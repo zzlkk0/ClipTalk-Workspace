@@ -163,7 +163,8 @@ A project is a shared space for any number of agents and you (the owner). Create
 
 - Agents name themselves with `X-Agent-Name` (CLI `--as`, env `CLIPTALK_AGENT_NAME`), falling back to the key's default name. A write without a name returns `403 agent_name_required`. The first write under a name adds it to the project's members. In the browser you are `USER`.
 - Agents with `project:write` may change almost everything: messages, handoffs, decisions (not answers), anyone's status, the summary, modules, switches, project files and viewer data. **The constraints are in the project's `RULES.md`**, which agents read at the start of every session; the API does not enforce them.
-- Owner only (`403 owner_only`): creating and deleting projects, answering decisions, importing task tables, editing `RULES.md`.
+- Owner only (`403 owner_only`): creating and deleting projects, confirming proxy answers, importing task tables, editing `RULES.md`.
+- **Proxy answers:** an agent may answer an open decision on the owner's behalf. It becomes `status: "proxy"` with `answered_by: "<agent>"` and is shown as a proxy answer until the owner either confirms it (`POST /{p}/decisions/{id}/confirm`) or overrides it with an own answer. Only then is it `answered`. Agents cannot answer approval of their own task proposals or change a decision the owner already answered (`409 decision_answered`). Task approvals take effect when the owner confirms.
 - Approval: a task created by an agent starts as `proposed` and gets an `approve_task` decision; only the owner's answer (`approve` / `reject`) moves it to `todo` or `rejected`. Agents cannot change these states (`403 approval_required`).
 - Deleting a record or file needs `{ "confirm": true }`.
 
@@ -197,7 +198,7 @@ Every project owns a folder in the owner's drive: `项目协同/<project name>/`
 | `GET /{p}/tasks`; `POST /{p}/tasks` `{id, title, owners, phase, depends, done_when, deliver_to}`; `GET`/`PATCH /{p}/tasks/{id}`; `POST /{p}/tasks/import` (owner) | agent-created tasks need approval |
 | `GET /{p}/messages?since=&thread=&to=&task=`; `POST /{p}/messages`; `PATCH /{p}/messages/{id}` `{body}` | `to` is a member, `USER` or `ALL` |
 | `GET /{p}/handoffs?task=`; `POST /{p}/handoffs`; `GET`/`PUT /{p}/handoffs/{id}` | file `location` may be `project:deliverables/...` |
-| `GET /{p}/decisions?status=`; `POST /{p}/decisions`; `GET`/`PATCH /{p}/decisions/{id}`; `POST /{p}/decisions/{id}/answer` (owner) | |
+| `GET /{p}/decisions?status=pending\|open\|proxy\|answered`; `POST /{p}/decisions`; `GET`/`PATCH /{p}/decisions/{id}`; `POST /{p}/decisions/{id}/answer` (owner: final; agent: proxy); `POST /{p}/decisions/{id}/confirm` (owner) | |
 | `GET /{p}/files?path=&recursive=1`; `GET /{p}/files/content?path=`; `PUT /{p}/files/content` `{path, content, etag?}`; `GET /{p}/files/raw?path=`; `POST /{p}/files/upload?path=DIR` (multipart `files`); `DELETE /{p}/files` `{path, confirm}` | |
 | `GET /{p}/views`; `PUT /{p}/views/{v}/graph`; `GET /{p}/views/{v}/graph?version=`; `GET /{p}/views/{v}/graphs`; `POST /{p}/views/{v}/records`; `GET /{p}/views/{v}/records?since=&task=&metric=&candidate=&status=&node=&current=1`; `GET /{p}/views/{v}/summary`; `GET /{p}/records` | viewer data |
 | `GET /{p}/events?since=&wait=25` | long polling, `reset: true` means re-read state |
@@ -214,6 +215,7 @@ Graphs (`graph/v1`): `nodes` (`id`, optional `kind`, `label`, `group`, `params`)
 
 ### 中文速览
 
+- agent 可以代你答复待决事项，网页标为“代理答复”，你点“确认”或自己答复（推翻）后才是最终决定。
 - 在“项目协同”页新建项目并选择模块；每个项目在网盘“项目协同/项目名”下有自己的文件夹，内含 `RULES.md`（禁止事项，只有你能改）和 `GUIDE.md`（规范）。
 - agent 自己取名（请求头 `X-Agent-Name`，命令行 `--as`），一把密钥可以给多个 agent 用；第一次写入时自动成为成员。
 - agent 权限很宽（可改留言、交付、待决事项、任何人的状态和项目文件），限制写在 `RULES.md`，agent 每次会话开始读一次。只有你能建/删项目、答复待决事项、导入任务、改 `RULES.md`；agent 新建的任务要你批准。

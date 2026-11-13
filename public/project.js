@@ -156,7 +156,7 @@
   }
   async function refreshOverview(local) {
     const info = state.info;
-    const [decisions, events] = await Promise.all([info.modules.decisions ? api(P('/decisions?status=open')) : { decisions: [] }, api(P('/events?since=' + Math.max(0, info.cursor - 40)))]);
+    const [decisions, events] = await Promise.all([info.modules.decisions ? api(P('/decisions?status=pending')) : { decisions: [] }, api(P('/events?since=' + Math.max(0, info.cursor - 40)))]);
     // Summary (现状): short free text anyone can update.
     const editSummary = h('button', { type: 'button', text: T('edit'), onclick: () => {
       const editor = h('textarea', { value: info.summary.text, maxlength: 4000, 'aria-label': T('summary') });
@@ -196,10 +196,12 @@
       const remove = h('button', { type: 'button', class: 'danger', text: '×', title: T('remove'), onclick: event => { if (!confirm(T('remove_switch_confirm') + '\n' + key)) return; const next = { ...info.switches }; delete next[key]; action(event.target, () => local.saveSwitches(next)); } });
       return h('div', { class: 'switch-row' }, h('label', { for: id, text: key }), control, remove);
     }) : h('p', { class: 'muted', text: T('no_switches') }));
-    const pending = decisions.decisions.filter(item => item.status === 'open');
+    const pending = decisions.decisions.filter(item => item.status === 'open' || item.status === 'proxy');
     put(local.decisions, !info.modules.decisions ? h('p', { class: 'muted', text: T('decisions_off') }) : pending.length ? pending.map(item => h('div', { class: 'thread decision' + (item.blocking ? ' blocking' : '') },
-      h('div', { class: 'msg-head' }, item.kind === 'approve_task' && badge('question', T('approval')), item.blocking && badge('blocker', T('blocking')), h('span', { class: 'who', text: item.raised_by }), item.task_id && badge('info', item.task_id), h('span', { class: 'meta', text: when(item.created_at) })),
-      h('p', { class: 'body', text: item.question }), h('button', { type: 'button', text: T('answer_now'), onclick: () => open('decisions') }))) : h('p', { class: 'muted', text: T('no_open_decisions') }));
+      h('div', { class: 'msg-head' }, item.status === 'proxy' && badge('proxy', T('proxy_badge').replace('{name}', item.answered_by)), item.kind === 'approve_task' && badge('question', T('approval')), item.blocking && item.status === 'open' && badge('blocker', T('blocking')), h('span', { class: 'who', text: item.raised_by }), item.task_id && badge('info', item.task_id), h('span', { class: 'meta', text: when(item.created_at) })),
+      h('p', { class: 'body', text: item.question }),
+      item.status === 'proxy' && kv([[T('proxy_answer').replace('{name}', item.answered_by), item.answer]]),
+      h('button', { type: 'button', text: item.status === 'proxy' ? T('review_proxy') : T('answer_now'), onclick: () => open('decisions') }))) : h('p', { class: 'muted', text: T('no_open_decisions') }));
     put(local.events, events.events.length ? events.events.slice().reverse().map(event => h('div', { class: 'event' }, h('time', { text: when(event.time) }), h('span', { class: 'who', text: event.actor }), h('span', { text: event.summary }))) : h('p', { class: 'muted', text: T('no_events') }));
     local.prompt.value = agentPrompt();
   }
@@ -342,7 +344,8 @@
   // ─── Decisions ────────────────────────────────
   function mountDecisions(view, local) { local.list = h('div'); view.append(local.list); }
   async function refreshDecisions(local) {
-    const list = (await api(P('/decisions'))).decisions.sort((a, b) => (a.status === 'open' ? 0 : 1) - (b.status === 'open' ? 0 : 1));
+    const rank = item => item.status === 'proxy' ? 0 : item.status === 'open' ? 1 : 2;
+    const list = (await api(P('/decisions'))).decisions.sort((a, b) => rank(a) - rank(b));
     put(local.list, list.length ? list.map(item => {
       const submit = (button, answer) => action(button, async () => { await api(P('/decisions/' + enc(item.id) + '/answer'), ui.json('POST', { answer })); await refresh(true); });
       let form;
@@ -353,11 +356,21 @@
         const send = h('button', { type: 'button', class: 'primary', text: T('submit_answer'), onclick: () => answer.value.trim() ? submit(send, answer.value) : ui.notice(T('answer_required'), true) });
         form = h('div', {}, item.options.length ? h('div', { class: 'option-row' }, item.options.map(option => h('button', { type: 'button', text: option, onclick: () => { answer.value = option; answer.focus(); } }))) : null, answer, h('div', { class: 'actions' }, send));
       }
-      return h('section', { class: 'card decision' + (item.status === 'answered' ? ' answered' : item.blocking ? ' blocking' : '') },
-        h('div', { class: 'msg-head' }, badge(item.status, statusLabel(item.status)), item.kind === 'approve_task' && badge('question', T('approval')), item.blocking && badge('blocker', T('blocking')), h('span', { class: 'who', text: item.raised_by }), item.task_id && badge('info', item.task_id), h('span', { class: 'meta', text: item.id + ' · ' + when(item.created_at) })),
+      let body;
+      if (item.status === 'proxy') {
+        // An agent answered on your behalf: keep it, or answer yourself to override.
+        const confirmButton = h('button', { type: 'button', class: 'primary', text: T('confirm_proxy'), onclick: () => action(confirmButton, async () => { await api(P('/decisions/' + enc(item.id) + '/confirm'), ui.json('POST', {})); await refresh(true); }) });
+        body = [kv([[T('proxy_answer').replace('{name}', item.answered_by), item.answer], [T('answered_at'), when(item.answered_at)]]),
+          h('div', { class: 'actions' }, confirmButton), h('details', {}, h('summary', { text: T('override_proxy') }), form)];
+      } else if (item.status === 'answered') {
+        const by = item.proxy ? T('confirmed_proxy').replace('{name}', item.answered_by) : T('answered_by_you');
+        body = [kv([[T('answer'), item.answer], [T('answered_at'), when(item.answered_at) + ' · ' + by]]), h('details', {}, h('summary', { text: T('change_answer') }), form)];
+      } else body = form;
+      return h('section', { class: 'card decision' + (item.status === 'answered' ? ' answered' : item.status === 'proxy' ? ' proxy' : item.blocking ? ' blocking' : '') },
+        h('div', { class: 'msg-head' }, badge(item.status, item.status === 'proxy' ? T('proxy_badge').replace('{name}', item.answered_by) : statusLabel(item.status)), item.kind === 'approve_task' && badge('question', T('approval')), item.blocking && item.status === 'open' && badge('blocker', T('blocking')), h('span', { class: 'who', text: item.raised_by }), item.task_id && badge('info', item.task_id), h('span', { class: 'meta', text: item.id + ' · ' + when(item.created_at) })),
         h('p', { class: 'body', text: item.question }),
         item.recommendation ? kv([[T('recommendation'), item.recommendation]]) : null,
-        item.status === 'answered' ? [kv([[T('answer'), item.answer], [T('answered_at'), when(item.answered_at)]]), h('details', {}, h('summary', { text: T('change_answer') }), form)] : form);
+        body);
     }) : h('p', { class: 'muted', text: T('no_decisions') }));
   }
 

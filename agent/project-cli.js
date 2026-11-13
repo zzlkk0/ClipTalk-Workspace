@@ -24,7 +24,8 @@ Every command acts as the agent named by --as NAME or CLIPTALK_AGENT_NAME
   send P --to A (--body T | --file F) [--type T] [--task ID] [--thread ID] [--ref kind:id ...]
   edit-message P ID (--body T | --file F)
   handoffs P [--task ID]                     handoff P --file handoff.json
-  decisions P [--status open|answered]
+  decisions P [--status pending|open|proxy|answered]
+  answer P DECISION_ID (--body T | --file F) proxy answer; shown as yours until the owner confirms or overrides
   ask P --question Q [--option A ...] [--recommend R] [--blocking] [--task ID]
   files P [DIR] [--recursive]                file-get P PATH
   file-put P PATH (--file F | --text T)      upload P DIR FILE...
@@ -127,6 +128,11 @@ async function runProject(client, p, v) {
     case 'handoffs': need(0); return call(base + '/handoffs' + query([['task', 'task']]));
     case 'handoff': need(0); return call(base + '/handoffs', 'POST', JSON.parse(read(v.file)));
     case 'decisions': need(0); return call(base + '/decisions' + query([['status', 'status']]));
+    case 'answer': {
+      need(1);
+      if ((v.body !== undefined) === (v.file !== undefined)) throw new Error('Choose exactly one of --body or --file.');
+      return call(base + '/decisions/' + enc(rest[0]) + '/answer', 'POST', { answer: v.body !== undefined ? v.body : read(v.file) });
+    }
     case 'ask': need(0); return call(base + '/decisions', 'POST', { question: v.question, options: v.option || [], recommendation: v.recommend || '', blocking: !!v.blocking, task_id: v.task });
     case 'files': {
       if (rest.length > 1 || !project) throw new Error('Wrong number of arguments. Use --help.');

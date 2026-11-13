@@ -63,6 +63,10 @@ test('Node CLI acts as the named agent: status, summary, files, tasks, records, 
   assert.equal(task.status, 'proposed');
   await f.request('/api/projects/demo/decisions/' + task.approval + '/answer', cookie, json('POST', { answer: 'approve' }));
   assert.equal((await cli('update-task', 'demo', '--as', 'PC1', 'T1', '--status', 'in_progress')).status, 'in_progress');
+  const asked = await cli('ask', 'demo', '--as', 'PC1', '--question', 'Use corner SS?', '--option', 'yes', '--option', 'no');
+  const proxied = await cli('answer', 'demo', '--as', 'server1', asked.id, '--body', 'yes');
+  assert.equal(proxied.status, 'proxy'); assert.equal(proxied.answered_by, 'server1');
+  assert.equal((await cli('decisions', 'demo', '--status', 'proxy')).decisions.length, 1);
   const first = await cli('records-push', 'demo', '--as', 'PC1', 'amp', '--file', 'results.csv', '--candidate', 'R1', '--task', 'T1');
   const again = await cli('records-push', 'demo', '--as', 'PC1', 'amp', '--file', 'results.csv', '--candidate', 'R1', '--task', 'T1');
   assert.equal(first.count, 3); assert.deepEqual(again.ids, first.ids, 'retry replays instead of duplicating');

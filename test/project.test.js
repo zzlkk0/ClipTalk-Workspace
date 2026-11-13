@@ -71,7 +71,7 @@ test('agent names, owner-only actions, broad agent permissions and isolation', a
   const proposed = (await PC1('/demo/tasks', json('POST', { id: 'T1', title: 'Measure gain', owners: ['PC1'] }))).data;
   assert.equal(proposed.status, 'proposed'); assert.match(proposed.approval, /^dec-/);
   assert.equal((await PC1('/demo/tasks/T1', json('PATCH', { status: 'todo', version: 1 }))).data.error, 'approval_required');
-  assert.equal((await PC1('/demo/decisions/' + proposed.approval + '/answer', json('POST', { answer: 'approve' }))).data.error, 'owner_only');
+  assert.equal((await PC1('/demo/decisions/' + proposed.approval + '/answer', json('POST', { answer: 'approve' }))).data.error, 'approval_required', 'nobody approves their own proposal');
   assert.equal((await PC1('/demo/decisions/' + proposed.approval, json('DELETE', { confirm: true }))).data.error, 'approval_required');
   assert.equal((await U('/demo/decisions/' + proposed.approval + '/answer', json('POST', { answer: 'approve' }))).data.status, 'answered');
   assert.equal((await PC1('/demo/tasks/T1')).data.status, 'todo');
@@ -82,11 +82,31 @@ test('agent names, owner-only actions, broad agent permissions and isolation', a
   assert.equal((await U('/demo/tasks', json('POST', { id: 'T3', title: 'By the owner' }))).data.status, 'todo');
   assert.equal((await PC1('/demo/tasks/import', json('POST', { tasks: [{ id: 'X', title: 'x' }] }))).data.error, 'owner_only');
 
-  // Decisions: agents raise and edit; only the owner answers.
+  // Decisions: agents raise, edit and may answer as proxy; the owner confirms or overrides.
   const decision = (await PC1('/demo/decisions', json('POST', { question: 'Buy more disk?', options: ['yes', 'no'], blocking: true }))).data;
   assert.equal((await S2('/demo/decisions/' + decision.id, json('PATCH', { question: 'Buy more disk now?', options: ['yes', 'no'] }))).data.question, 'Buy more disk now?');
-  await U('/demo/decisions/' + decision.id + '/answer', json('POST', { answer: 'no' }));
-  assert.equal((await S2('/demo/decisions/' + decision.id, json('PATCH', { question: 'again?' }))).data.error, 'decision_answered');
+  const proxy = (await S2('/demo/decisions/' + decision.id + '/answer', json('POST', { answer: 'yes' }))).data;
+  assert.equal(proxy.status, 'proxy'); assert.equal(proxy.answered_by, 'server2'); assert.equal(proxy.proxy, true);
+  let state2 = (await PC1('/demo/state')).data;
+  assert.equal(state2.proxy_decisions, 1); assert.equal(state2.blocking_decisions, 0, 'a proxy answer releases the blocking flag');
+  assert.equal((await PC1('/demo/decisions?status=pending')).data.decisions.some(item => item.id === decision.id), true, 'still waiting for the owner');
+  assert.equal((await S2('/demo/decisions/' + decision.id, json('PATCH', { question: 'edit after answer?' }))).data.error, 'decision_answered');
+  assert.equal((await S2('/demo/decisions/' + decision.id + '/confirm', json('POST', {}))).data.error, 'owner_only');
+  const confirmed = (await U('/demo/decisions/' + decision.id + '/confirm', json('POST', {}))).data;
+  assert.equal(confirmed.status, 'answered'); assert.equal(confirmed.answered_by, 'server2'); assert.ok(confirmed.confirmed_at);
+  assert.equal((await U('/demo/decisions/' + decision.id + '/confirm', json('POST', {}))).data.error, 'nothing_to_confirm');
+  assert.equal((await PC1('/demo/decisions/' + decision.id + '/answer', json('POST', { answer: 'no' }))).data.error, 'decision_answered', 'agents cannot change a final answer');
+  // Override: the owner answers differently after a proxy answer.
+  const renameDecision = (await PC1('/demo/decisions', json('POST', { question: 'Rename the view?' }))).data;
+  await S2('/demo/decisions/' + renameDecision.id + '/answer', json('POST', { answer: 'yes, to rx' }));
+  const overridden = (await U('/demo/decisions/' + renameDecision.id + '/answer', json('POST', { answer: 'no' }))).data;
+  assert.equal(overridden.status, 'answered'); assert.equal(overridden.answered_by, 'USER'); assert.equal(overridden.answer, 'no');
+  // Another member may proxy-approve a proposed task; the task waits for the owner's confirmation.
+  const third = (await PC1('/demo/tasks', json('POST', { id: 'T4', title: 'Proxy approval' }))).data;
+  assert.equal((await S2('/demo/decisions/' + third.approval + '/answer', json('POST', { answer: 'approve' }))).data.status, 'proxy');
+  assert.equal((await PC1('/demo/tasks/T4')).data.status, 'proposed');
+  await U('/demo/decisions/' + third.approval + '/confirm', json('POST', {}));
+  assert.equal((await PC1('/demo/tasks/T4')).data.status, 'todo');
 
   // Handoffs can be edited; deletion by agents needs confirmation.
   const handoff = (await PC1('/demo/handoffs', json('POST', { task_id: 'T1', to: 'server1', status: 'PASS', summary: 'gain 20.1 dB', files: [{ name: 'g.csv', location: 'project:deliverables/T1/g.csv' }] }))).data;

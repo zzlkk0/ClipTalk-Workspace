@@ -69,3 +69,4 @@ textarea{width:100%;min-height:120px;background:var(--input);border:1px solid va
 .switch-row input[type=checkbox]+span{font-weight:600}
 .st-proposed,.st-approval{color:var(--warn)}.st-rejected{color:var(--fail)}
 .danger-zone{border-color:color-mix(in srgb,var(--danger) 45%,var(--border))}.danger-zone h2{color:var(--danger)}
+.st-proxy{color:#8b5cf6}:root[data-theme="light"] .st-proxy{color:#6d28d9}.decision.proxy{border-left-color:#8b5cf6}

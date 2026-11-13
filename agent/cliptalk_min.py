@@ -353,6 +353,11 @@ def run_project(client, args):
         need(0); return call(base + '/handoffs', 'POST', json.loads(read(args.file)))
     if command == 'decisions':
         need(0); return call(base + '/decisions' + query([('status', args.status)]))
+    if command == 'answer':
+        need(1)
+        if (args.body is None) == (args.file is None):
+            raise ApiError('Choose exactly one of --body or --file.')
+        return call(base + '/decisions/' + q(rest[0], safe='') + '/answer', 'POST', {'answer': args.body if args.body is not None else read(args.file)})
     if command == 'ask':
         need(0)
         body = {'question': args.question, 'options': args.option or [], 'recommendation': args.recommend or '', 'blocking': bool(args.blocking)}
@@ -444,7 +449,8 @@ Project commands act as the agent named by --as NAME or CLIPTALK_AGENT_NAME.
   cliptalk_min.py project send P --to A (--body T | --file F) [--type T] [--task ID] [--thread ID] [--ref kind:id ...]
   cliptalk_min.py project edit-message P ID (--body T | --file F)
   cliptalk_min.py project handoffs P [--task ID] | handoff P --file handoff.json
-  cliptalk_min.py project decisions P [--status open|answered]
+  cliptalk_min.py project decisions P [--status pending|open|proxy|answered]
+  cliptalk_min.py project answer P DECISION_ID (--body T | --file F)   proxy answer; the owner confirms or overrides
   cliptalk_min.py project ask P --question Q [--option A ...] [--recommend R] [--blocking] [--task ID]
   cliptalk_min.py project files P [DIR] [--recursive] | file-get P PATH | file-put P PATH (--file F | --text T)
   cliptalk_min.py project upload P DIR FILE... | download P PATH OUTPUT | file-rm P PATH --confirm

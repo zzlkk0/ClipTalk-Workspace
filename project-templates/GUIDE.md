@@ -42,7 +42,7 @@
 
 - **任务**：agent 新建的任务进入“待批准”，并自动生成一条待决事项；主人批准后才变成待办。已有任务的状态和备注可以直接更新。
 - **对话**：`type` 用 `info`、`question`、`answer`、`blocker`、`handoff_notice`；回复时带 `thread`。
-- **待决事项**：写清问题、选项、建议和是否阻塞；`blocking: true` 时先停下这件事做别的。
+- **待决事项**：写清问题、选项、建议和是否阻塞；`blocking: true` 时先停下这件事做别的。agent 可以代答（`answer` 命令或 `project_answer_decision`），显示为“代理答复”，主人在网页上**确认**或**推翻**后才是最终决定。
 - **交付**：每条交付写清任务、结论（带数字）、条件、文件位置（`project:deliverables/...`）、限制和希望对方做什么。
 - **交付物查看**（标题可改）：
   - 图：`graph/v1`，`nodes`（`id`、`kind`、`label`、`group`、`params`）、`edges`（`from`、`to`，可写 `节点.端口`）、`groups`；每次上传成为新版本，可对比。

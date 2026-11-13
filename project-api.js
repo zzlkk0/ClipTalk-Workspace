@@ -83,7 +83,8 @@ function createProjectRouter({ projects, keys, receiveFiles, uploadsDir }) {
   router.post('/:project/decisions', write((req, who) => { const decision = projects.raiseDecision(who, P(req), body(req)); target(req, decision.id); return decision; }, 201));
   router.get('/:project/decisions/:id', read((req, who) => projects.decision(who.owner, P(req), req.params.id)));
   router.patch('/:project/decisions/:id', write((req, who) => { target(req, req.params.id); return projects.editDecision(who, P(req), req.params.id, body(req)); }));
-  router.post('/:project/decisions/:id/answer', write((req, who) => projects.answerDecision(who, P(req), req.params.id, body(req))));
+  router.post('/:project/decisions/:id/answer', write((req, who) => { target(req, req.params.id, 'answer'); return projects.answerDecision(who, P(req), req.params.id, body(req)); }));
+  router.post('/:project/decisions/:id/confirm', write((req, who) => projects.confirmDecision(who, P(req), req.params.id)));
 
   // Project folder (also visible in the drive)
   router.get('/:project/files', read((req, who) => projects.listFiles(who.owner, P(req), req.query.path, req.query.recursive === '1' || req.query.recursive === 'true')));
