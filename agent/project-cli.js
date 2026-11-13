@@ -28,7 +28,8 @@ Every command acts as the agent named by --as NAME or CLIPTALK_AGENT_NAME
   answer P DECISION_ID (--body T | --file F) proxy answer; shown as yours until the owner confirms or overrides
   ask P --question Q [--option A ...] [--recommend R] [--blocking] [--task ID]
   files P [DIR] [--recursive]                file-get P PATH
-  file-put P PATH (--file F | --text T)      upload P DIR FILE...
+  file-put P PATH (--file F | --text T) [--etag E]   upload P DIR FILE...
+                                             (--etag from file-get: refuses with 409 if someone changed it since)
   download P PATH OUTPUT                     file-rm P PATH --confirm
   views P                                    graph-get P VIEW [--version N]
   graph-push P VIEW --file graph.json
@@ -48,7 +49,7 @@ const PROJECT_OPTIONS = {
   ref: { type: 'string', multiple: true }, question: { type: 'string' }, option: { type: 'string', multiple: true }, recommend: { type: 'string' }, blocking: { type: 'boolean' },
   metric: { type: 'string' }, candidate: { type: 'string' }, evidence: { type: 'string' }, wait: { type: 'string' }, 'cursor-file': { type: 'string' }, 'idempotency-key': { type: 'string' },
   role: { type: 'string' }, enable: { type: 'string' }, disable: { type: 'string' }, title: { type: 'string' }, for: { type: 'string' }, recursive: { type: 'boolean' },
-  depends: { type: 'string' }, 'done-when': { type: 'string' },
+  depends: { type: 'string' }, 'done-when': { type: 'string' }, etag: { type: 'string' },
 };
 
 async function runProject(client, p, v) {
@@ -139,7 +140,7 @@ async function runProject(client, p, v) {
       return call(base + '/files?path=' + enc(rest[0] || '') + (v.recursive ? '&recursive=1' : ''));
     }
     case 'file-get': need(1); return call(base + '/files/content?path=' + enc(rest[0]));
-    case 'file-put': need(1); return call(base + '/files/content', 'PUT', { path: rest[0], content: textOf() });
+    case 'file-put': need(1); return call(base + '/files/content', 'PUT', { path: rest[0], content: textOf(), ...(v.etag ? { etag: v.etag } : {}) });
     case 'file-rm': need(1); if (!v.confirm) throw new Error('Deletion requires --confirm.'); return call(base + '/files', 'DELETE', { path: rest[0], confirm: true });
     case 'upload': {
       if (rest.length < 2 || !project) throw new Error('Use: upload P DIR FILE...');

@@ -371,7 +371,11 @@ def run_project(client, args):
     if command == 'file-get':
         need(1); return call(base + '/files/content' + query([('path', rest[0])]))
     if command == 'file-put':
-        need(1); return call(base + '/files/content', 'PUT', {'path': rest[0], 'content': text_of()})
+        need(1)
+        body = {'path': rest[0], 'content': text_of()}
+        if args.etag:
+            body['etag'] = args.etag
+        return call(base + '/files/content', 'PUT', body)
     if command == 'file-rm':
         need(1)
         if not args.confirm:
@@ -452,7 +456,7 @@ Project commands act as the agent named by --as NAME or CLIPTALK_AGENT_NAME.
   cliptalk_min.py project decisions P [--status pending|open|proxy|answered]
   cliptalk_min.py project answer P DECISION_ID (--body T | --file F)   proxy answer; the owner confirms or overrides
   cliptalk_min.py project ask P --question Q [--option A ...] [--recommend R] [--blocking] [--task ID]
-  cliptalk_min.py project files P [DIR] [--recursive] | file-get P PATH | file-put P PATH (--file F | --text T)
+  cliptalk_min.py project files P [DIR] [--recursive] | file-get P PATH | file-put P PATH (--file F | --text T) [--etag E]
   cliptalk_min.py project upload P DIR FILE... | download P PATH OUTPUT | file-rm P PATH --confirm
   cliptalk_min.py project views P | graph-get P VIEW [--version N] | graph-push P VIEW --file graph.json
   cliptalk_min.py project records-get P VIEW|- [--since ID] [--task ID] [--metric M] [--candidate C] [--status S]
@@ -470,7 +474,7 @@ def main(argv=None):
     parser.add_argument('-h', '--help', action='store_true')
     parser.add_argument('args', nargs='*')
     for name in ('json', 'file', 'version', 'status', 'notes', 'since', 'thread', 'to', 'task', 'body', 'type', 'question', 'text', 'role',
-                 'enable', 'disable', 'title', 'depends', 'done-when', 'recommend', 'metric', 'candidate', 'evidence', 'wait', 'cursor-file', 'idempotency-key'):
+                 'enable', 'disable', 'title', 'depends', 'done-when', 'etag', 'recommend', 'metric', 'candidate', 'evidence', 'wait', 'cursor-file', 'idempotency-key'):
         parser.add_argument('--' + name)
     parser.add_argument('--as', dest='as_name')
     parser.add_argument('--for', dest='for_name')

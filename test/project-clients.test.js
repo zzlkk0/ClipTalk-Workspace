@@ -52,7 +52,10 @@ test('Node CLI acts as the named agent: status, summary, files, tasks, records, 
   assert.equal((await cli('member-set', 'demo', '--as', 'PC1', 'server1', '--role', 'lab server')).role, 'lab server');
   fs.writeFileSync(path.join(dir, 'intro.md'), '# PC1\nRuns analysis.');
   assert.equal((await cli('file-put', 'demo', '--as', 'PC1', 'agents/PC1.md', '--file', 'intro.md')).path, 'agents/PC1.md');
-  assert.match((await cli('file-get', 'demo', 'agents/PC1.md')).content, /Runs analysis/);
+  const intro = await cli('file-get', 'demo', 'agents/PC1.md');
+  assert.match(intro.content, /Runs analysis/);
+  assert.equal((await cli('file-put', 'demo', '--as', 'PC1', 'agents/PC1.md', '--text', '# PC1 v2', '--etag', intro.etag)).path, 'agents/PC1.md');
+  await assert.rejects(cli('file-put', 'demo', '--as', 'PC1', 'agents/PC1.md', '--text', 'stale', '--etag', intro.etag), /version_conflict/);
   assert.match((await cli('file-get', 'demo', 'RULES.md')).content, /RULES/);
   await assert.rejects(cli('file-put', 'demo', '--as', 'PC1', 'RULES.md', '--text', 'x'), /owner_only/);
   assert.equal((await cli('upload', 'demo', '--as', 'PC1', 'deliverables/T1', 'results.csv')).files[0].path, 'deliverables/T1/results.csv');
@@ -120,7 +123,10 @@ test('Python standard-library client and connectivity check', { skip: python ? f
   assert.equal((await run('project', 'send', 'demo', '--as', 'server1', '--to', 'PC1', '--type', 'question', '--body', 'from python')).from, 'server1');
   assert.equal((await run('project', 'set-status', 'demo', '--as', 'server1', '--json', '{"plan":"T0"}')).version, 1);
   assert.equal((await run('project', 'summary', 'demo', '--as', 'server1', '--text', 'Python says hi')).version, 1);
-  assert.equal((await run('project', 'file-put', 'demo', '--as', 'server1', 'agents/server1.md', '--text', '# server1')).path, 'agents/server1.md');
+  const created = await run('project', 'file-put', 'demo', '--as', 'server1', 'agents/server1.md', '--text', '# server1');
+  assert.equal(created.path, 'agents/server1.md');
+  await assert.rejects(run('project', 'file-put', 'demo', '--as', 'server1', 'agents/server1.md', '--text', 'stale', '--etag', 'wrong-etag'), error => error.stderr.includes('version_conflict'));
+  assert.equal((await run('project', 'file-put', 'demo', '--as', 'server1', 'agents/server1.md', '--text', '# server1 v2', '--etag', created.etag)).path, 'agents/server1.md');
   assert.equal((await run('project', 'upload', 'demo', '--as', 'server1', 'deliverables/T0', 'results.csv')).files[0].path, 'deliverables/T0/results.csv');
   assert.equal((await run('project', 'download', 'demo', 'deliverables/T0/results.csv', 'copy.csv')).ok, true);
   assert.equal(fs.readFileSync(path.join(dir, 'copy.csv'), 'utf8'), CSV);
