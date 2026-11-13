@@ -29,6 +29,19 @@ const BUILTIN_RULES = [
     test: text => /[/\\](?:pdks?|tsmc\w*|cln\d+\w*|crn\d+\w*|tcbn\d+\w*|smic\w*|umc\d*\w*|gf\d+\w*|globalfoundries\w*|tower\w*|xfab\w*|ihp\w*|sky130\w*|gpdk\d*\w*|ams_?c\d+\w*)[/\\]/i.test(text) },
 ];
 
+// Long runs of base64 (e.g. a binary file sent as text) contain "/" and random
+// letters and would match the path rule by chance. A run of 64+ base64
+// characters with few slashes (base64 has ~1.6%; paths have one every few
+// characters) is treated as encoded data and not scanned.
+function stripEncoded(text) {
+  // Line-wrapped base64 (e.g. 76 characters per line): short lines can have several
+  // slashes by chance, so judge the whole block when nearly every line is base64.
+  const encodedLine = line => /^[A-Za-z0-9+\/]{60,}={0,2}$/.test(line.trim());
+  const lines = text.split(/\r?\n/), filled = lines.filter(line => line.trim());
+  if (filled.length >= 8 && filled.filter(encodedLine).length >= filled.length * 0.9) text = lines.filter(line => !encodedLine(line)).join('\n');
+  return text.replace(/[A-Za-z0-9+\/]{64,}={0,2}/g, run => (run.split('/').length - 1) / run.length < 0.04 ? ' ' : run);
+}
+
 class ContentGuard {
   constructor(dataDir) {
     this.file = dataDir ? path.join(dataDir, RULES_FILE) : null;
@@ -73,7 +86,7 @@ class ContentGuard {
     const rules = [...BUILTIN_RULES.filter(rule => !disabled.has(rule.id)), ...custom];
     const strings = [];
     const collect = item => {
-      if (typeof item === 'string') strings.push(item);
+      if (typeof item === 'string') strings.push(stripEncoded(item));
       else if (Array.isArray(item)) item.forEach(collect);
       else if (item && typeof item === 'object') for (const [key, child] of Object.entries(item)) { strings.push(key); collect(child); }
     };
@@ -88,4 +101,4 @@ class ContentGuard {
   }
 }
 
-module.exports = { ContentGuard, BUILTIN_RULES, RULES_FILE };
+module.exports = { ContentGuard, BUILTIN_RULES, RULES_FILE, stripEncoded };

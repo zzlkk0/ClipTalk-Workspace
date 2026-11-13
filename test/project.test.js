@@ -281,6 +281,16 @@ test('content guard rules and the Markdown task table parser', () => {
   const guard = new ContentGuard(null);
   assert.throws(() => guard.check({ nested: ['ok', { deeper: '.MODEL q1 npn (bf=100)' }] }), /sensitive_content_blocked/);
   assert.doesNotThrow(() => guard.check({ nodes: [{ id: 'M1', kind: 'nmos', params: { W_um: 2, L_um: 0.06 } }] }));
+  // Binary data sent as base64 text must not trip the path rule by chance; real paths still do.
+  const crypto = require('node:crypto');
+  for (let i = 0; i < 10; i++) {
+    const encoded = crypto.randomBytes(300 * 1024).toString('base64');
+    assert.doesNotThrow(() => guard.check(encoded), 'single-line base64');
+    assert.doesNotThrow(() => guard.check({ content: encoded.match(/.{1,76}/g).join('\n') }), 'line-wrapped base64');
+  }
+  const wrapped = crypto.randomBytes(3000).toString('base64').match(/.{1,76}/g).join('\n');
+  assert.throws(() => guard.check(wrapped + '\nlibs in /data/pdk/models/x.scs'), /sensitive_content_blocked/);
+  assert.throws(() => guard.check('see /NAS/pdk/tsmc/tsmc65_GP/SC_2026/ here'), /sensitive_content_blocked/);
   const markdown = [
     '| ID | 阶段 | 任务 | 负责 | 前置 | 完成标准 | 交给谁 |', '|---|---|---|---|---|---|---|',
     '| T1 | 准备 | 搭环境 `env` | PC1、server2 | — | 能跑通 | 用户 |',

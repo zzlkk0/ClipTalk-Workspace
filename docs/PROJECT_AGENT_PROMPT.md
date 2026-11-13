@@ -32,7 +32,7 @@ cliptalk project set-status <P> --json '{"plan":"...","in_progress":[],"blocked"
 cliptalk project summary <P> --text "当前进展几行"
 cliptalk project file-get <P> RULES.md
 cliptalk project file-put <P> agents/<你的名字>.md --file intro.md
-cliptalk project upload <P> deliverables/<主题> ./result.csv
+cliptalk project upload <P> deliverables/<主题> ./result.csv     # 二进制（npz、图片等）也用 upload，不要转成 base64 文本
 cliptalk project ask <P> --question "..." --option "A" --option "B" --blocking
 cliptalk project task-add <P> T7 --title "..." --owner <你的名字>     # 进入待批准
 ```
