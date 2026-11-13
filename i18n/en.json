@@ -263,7 +263,9 @@
     "invalid_record": "Invalid record",
     "file_too_large_for_text": "The file is too large to open as text",
     "https_required": "Agent API calls and key creation need the HTTPS address, not this plain HTTP one",
-    "nothing_to_confirm": "There is no proxy answer to confirm"
+    "nothing_to_confirm": "There is no proxy answer to confirm",
+    "own_decision": "You cannot answer a decision you raised; another member or the owner must answer",
+    "proxy_answered": "This decision already has a proxy answer; only the owner can confirm or override it"
   },
   "account": {
     "title": "My account",

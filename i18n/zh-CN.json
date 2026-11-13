@@ -263,7 +263,9 @@
     "invalid_record": "记录格式不正确",
     "file_too_large_for_text": "文件太大，不能作为文本打开",
     "https_required": "这个明文 HTTP 地址不能用于 Agent API 或创建密钥，请改用 HTTPS 地址",
-    "nothing_to_confirm": "这个事项没有待确认的代理答复"
+    "nothing_to_confirm": "这个事项没有待确认的代理答复",
+    "own_decision": "不能代答自己提出的事项，需要由另一个成员或主人答复",
+    "proxy_answered": "这个事项已有代理答复，只能由主人确认或推翻"
   },
   "account": {
     "title": "我的账号",

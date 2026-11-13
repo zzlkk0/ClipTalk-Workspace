@@ -71,7 +71,7 @@ test('agent names, owner-only actions, broad agent permissions and isolation', a
   const proposed = (await PC1('/demo/tasks', json('POST', { id: 'T1', title: 'Measure gain', owners: ['PC1'] }))).data;
   assert.equal(proposed.status, 'proposed'); assert.match(proposed.approval, /^dec-/);
   assert.equal((await PC1('/demo/tasks/T1', json('PATCH', { status: 'todo', version: 1 }))).data.error, 'approval_required');
-  assert.equal((await PC1('/demo/decisions/' + proposed.approval + '/answer', json('POST', { answer: 'approve' }))).data.error, 'approval_required', 'nobody approves their own proposal');
+  assert.equal((await PC1('/demo/decisions/' + proposed.approval + '/answer', json('POST', { answer: 'approve' }))).data.error, 'own_decision', 'nobody approves their own proposal');
   assert.equal((await PC1('/demo/decisions/' + proposed.approval, json('DELETE', { confirm: true }))).data.error, 'approval_required');
   assert.equal((await U('/demo/decisions/' + proposed.approval + '/answer', json('POST', { answer: 'approve' }))).data.status, 'answered');
   assert.equal((await PC1('/demo/tasks/T1')).data.status, 'todo');
@@ -85,7 +85,11 @@ test('agent names, owner-only actions, broad agent permissions and isolation', a
   // Decisions: agents raise, edit and may answer as proxy; the owner confirms or overrides.
   const decision = (await PC1('/demo/decisions', json('POST', { question: 'Buy more disk?', options: ['yes', 'no'], blocking: true }))).data;
   assert.equal((await S2('/demo/decisions/' + decision.id, json('PATCH', { question: 'Buy more disk now?', options: ['yes', 'no'] }))).data.question, 'Buy more disk now?');
+  assert.equal((await PC1('/demo/decisions/' + decision.id + '/answer', json('POST', { answer: 'yes' }))).data.error, 'own_decision', 'no proxy answer to your own question');
   const proxy = (await S2('/demo/decisions/' + decision.id + '/answer', json('POST', { answer: 'yes' }))).data;
+  const repeat = await agent(f, k.token, 'server9')('/demo/decisions/' + decision.id + '/answer', json('POST', { answer: 'no' }));
+  assert.equal(repeat.status, 409); assert.equal(repeat.data.error, 'proxy_answered'); assert.equal(repeat.data.detail.answered_by, 'server2');
+  assert.equal((await S2('/demo/decisions/' + decision.id + '/answer', json('POST', { answer: 'no' }))).data.error, 'proxy_answered', 'not even the same proxy rewrites it');
   assert.equal(proxy.status, 'proxy'); assert.equal(proxy.answered_by, 'server2'); assert.equal(proxy.proxy, true);
   let state2 = (await PC1('/demo/state')).data;
   assert.equal(state2.proxy_decisions, 1); assert.equal(state2.blocking_decisions, 0, 'a proxy answer releases the blocking flag');

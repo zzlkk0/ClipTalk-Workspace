@@ -736,7 +736,9 @@ class ProjectStore {
         this.event(project, who, 'decision', pubId('decision', row.id), row.status === 'proxy' ? 'USER overrode the proxy answer of ' + row.answered_by : 'USER answered');
       } else {
         if (row.status === 'answered') fail('decision_answered', 409);
-        if (row.raised_by === by && row.kind === 'approve_task') fail('approval_required', 403); // nobody approves their own proposal
+        // One proxy answer per decision, never by the member who raised it.
+        if (row.raised_by === by) fail('own_decision', 403);
+        if (row.status === 'proxy') fail('proxy_answered', 409, { answered_by: row.answered_by });
         this.db.prepare("UPDATE project_decisions SET status = 'proxy', answer = ?, answered_by = ?, answered_at = ?, confirmed_at = NULL WHERE id = ?").run(answer, by, now, row.id);
         if (this.proxyAppliesToTask(row, by)) this.applyTaskApproval(project, who, row, answer, by);
         this.event(project, who, 'decision', pubId('decision', row.id), by + ' answered as proxy (awaiting USER)');
